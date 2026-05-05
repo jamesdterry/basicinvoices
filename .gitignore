@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.local
+.env.production
+data/
+attachments/
+coverage/
+dist/
+.DS_Store
+*.log
+playwright-report/
+test-results/
+/.auth/*
+!/.auth/.gitkeep
