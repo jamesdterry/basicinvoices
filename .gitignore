@@ -10,5 +10,5 @@ dist/
 *.log
 playwright-report/
 test-results/
-/.auth/*
-!/.auth/.gitkeep
+.auth/
+

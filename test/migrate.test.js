@@ -18,7 +18,18 @@ describe('runMigrations', () => {
       .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
       .all()
       .map((r) => r.name);
-    expect(tables).toEqual(expect.arrayContaining(['_health', '_meta', 'error_log']));
+    expect(tables).toEqual(
+      expect.arrayContaining([
+        '_health',
+        '_meta',
+        'admin_audit',
+        'audit_changes',
+        'error_log',
+        'magic_link_tokens',
+        'sessions',
+        'users',
+      ])
+    );
 
     const second = runMigrations(db);
     expect(second.applied).toBe(0);

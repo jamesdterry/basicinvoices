@@ -9,15 +9,29 @@
   <body>
     <main class="stack">
       <h1>Basic Invoices</h1>
-      <p>Sign in with a magic link.</p>
-      <form id="login-form" class="stack" novalidate>
+      <p id="login-status" class="muted" hidden></p>
+      <form id="magic-link-form" class="stack" novalidate>
         <label class="stack">
           <span>Email</span>
           <input class="input" type="email" name="email" required autocomplete="email" />
         </label>
-        <button class="btn" type="submit" disabled>Email me a link</button>
+        <button class="btn" type="submit">Email me a link</button>
       </form>
-      <p class="muted">Auth wiring lands in Stage 1. This page is a stub.</p>
+      <details>
+        <summary class="muted">Sign in with a password instead</summary>
+        <form id="password-form" class="stack" novalidate>
+          <label class="stack">
+            <span>Email</span>
+            <input class="input" type="email" name="email" required autocomplete="email" />
+          </label>
+          <label class="stack">
+            <span>Password</span>
+            <input class="input" type="password" name="password" required autocomplete="current-password" />
+          </label>
+          <button class="btn" type="submit">Sign in</button>
+        </form>
+      </details>
     </main>
+    <script type="module" src="/views/login.js"></script>
   </body>
 </html>

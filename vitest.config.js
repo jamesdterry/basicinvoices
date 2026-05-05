@@ -8,6 +8,11 @@ export default defineConfig({
     globals: false,
     pool: 'forks',
     poolOptions: { forks: { singleFork: true } },
-    env: { NODE_ENV: 'test', DB_PATH: ':memory:' },
+    env: {
+      NODE_ENV: 'test',
+      DB_PATH: ':memory:',
+      SUPER_ADMIN_EMAIL: 'admin@example.com',
+      BASE_URL: 'http://localhost:8080',
+    },
   },
 });

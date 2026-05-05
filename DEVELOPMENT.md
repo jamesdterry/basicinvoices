@@ -182,12 +182,12 @@ These should be lifted into Stage 0 with minimal edits:
 
 Each stage is independently shippable. After each stage: deploy to fly, smoke `/healthz`, run e2e suite.
 
-### Stage 0 — Scaffold + ops
+### Stage 0 — DONE Scaffold + ops
 **Scope.** `package.json` (express, better-sqlite3, bcrypt, cookie-parser, helmet, compression, pino + pino-pretty dev, nodemailer, busboy, puppeteer-core, @sparticuz/chromium; dev: vitest, supertest, @playwright/test, eslint, prettier). `server/config.js` fail-fast in prod. `db/connection.js` + `migrate.js` + `0001_init.sql` (creates `_health`, `error_log`, `_meta`). `server/index.js` with helmet strict CSP, compression, cookie-parser, JSON parser, mounts `/healthz` and serves `public/`. `server/timers/pruneErrors.js`. `Dockerfile` + `docker-entrypoint.sh` (verbatim playbook §7 gate) + `fly.toml` (`min_machines_running = 1`) + `litestream.yml`. `public/` shell + `login.html` stub + the four primitives. Vitest/Playwright skeletons. `test/db.js` helper. AGENTS.md cleanup. README + LICENSE.
 **Migrations.** `0001_init.sql`.
 **Verification.** `npm run dev` boots; `/healthz` returns 200 and bumps `_health.bumped_at`; `docker build .` succeeds; CSP headers present; manual `fly deploy` against a throwaway app works.
 
-### Stage 1 — Auth
+### Stage 1 — DONE Auth
 **Scope.** Migration `0002_users_sessions_auth.sql` (users, sessions, magic_link_tokens, admin_audit, audit_changes). `services/auth.js` (request/redeem magic link, password login/set, session create/revoke; super-admin bootstrap auto-creates the user when an unknown email matches `SUPER_ADMIN_EMAIL`; unknown emails on `requestMagicLink` silently no-op). `services/email.js` (nodemailer wrapper; `dev-email` stdout when `SMTP_HOST` unset). Middleware: `requireUser` (with `loadSessionFromCookie`), `requireSuperAdmin`, `csrf`, `rateLimit`. Routes: `POST /auth/magic-link`, `GET /auth/redeem`, `POST /auth/password`, `POST /auth/logout`, `GET /api/me`. `public/login.html` + `public/views/login.js`. `public/index.html` gated, hash router stub home view.
 **Tests.** Bootstrap creates super-admin; magic-link token is one-shot and SHA-256 hashed; CSRF rejects mismatched header; rate limiter trips. E2E `auth.spec.js` — request magic link, follow stdout-logged URL via `E2E_EMAIL_LOG`.
 **Verification.** Magic-link login as super-admin works; CSRF cookie set; `/api/me` returns role.

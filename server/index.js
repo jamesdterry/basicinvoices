@@ -7,12 +7,17 @@ import { logger } from './logger.js';
 import { db } from './db/connection.js';
 import { runMigrations } from './db/migrate.js';
 import { healthRouter } from './routes/health.js';
+import { authRouter } from './routes/auth.js';
+import { meRouter } from './routes/me.js';
+import { csrf } from './middleware/csrf.js';
+import { loadSessionFromCookie, gateAppShell } from './middleware/requireUser.js';
 import { startPruneErrorsTimer } from './timers/pruneErrors.js';
 
 runMigrations(db, { log: (m) => logger.info({ migrate: m }, 'migration applied') });
 
 export function createApp() {
   const app = express();
+  app.set('trust proxy', 1);
 
   app.use(
     helmet({
@@ -37,8 +42,19 @@ export function createApp() {
   app.use(compression());
   app.use(cookieParser());
   app.use(express.json({ limit: '1mb' }));
+  app.use(csrf);
+  app.use(loadSessionFromCookie);
 
   app.use('/healthz', healthRouter);
+  app.use('/auth', authRouter);
+  app.use('/api/me', meRouter);
+
+  // App-shell gating: only / and /index.html require a session. Everything
+  // else under public/ (login.html, /lib/*, /views/*, css) stays open.
+  app.get(['/', '/index.html'], gateAppShell, (_req, res) => {
+    res.sendFile('index.html', { root: 'public' });
+  });
+
   app.use(express.static('public', { index: false, extensions: ['html'] }));
 
   app.use((err, req, res, _next) => {
