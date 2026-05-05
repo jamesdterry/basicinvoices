@@ -9,6 +9,9 @@ import { runMigrations } from './db/migrate.js';
 import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { meRouter } from './routes/me.js';
+import { clientsRouter } from './routes/clients.js';
+import { projectsRouter } from './routes/projects.js';
+import { usersRouter } from './routes/users.js';
 import { csrf } from './middleware/csrf.js';
 import { loadSessionFromCookie, gateAppShell } from './middleware/requireUser.js';
 import { startPruneErrorsTimer } from './timers/pruneErrors.js';
@@ -48,6 +51,9 @@ export function createApp() {
   app.use('/healthz', healthRouter);
   app.use('/auth', authRouter);
   app.use('/api/me', meRouter);
+  app.use('/api/clients', clientsRouter);
+  app.use('/api/projects', projectsRouter);
+  app.use('/api/users', usersRouter);
 
   // App-shell gating: only / and /index.html require a session. Everything
   // else under public/ (login.html, /lib/*, /views/*, css) stays open.

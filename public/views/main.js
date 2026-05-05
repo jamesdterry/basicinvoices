@@ -1,6 +1,11 @@
 import { h, set, state } from '/lib/state.js';
 import { startRouter } from '/lib/router.js';
-import { getJson, postJson } from '/lib/api.js';
+import { getJson } from '/lib/api.js';
+import { mountNav } from '/components/nav.js';
+import { clients } from '/views/clients.js';
+import { clientDetail } from '/views/clientDetail.js';
+import { projects } from '/views/projects.js';
+import { projectDetail } from '/views/projectDetail.js';
 
 const handlers = {
   home(_params, mount) {
@@ -13,18 +18,21 @@ const handlers = {
               `Signed in as ${user.display_name} (${user.email}) — role: ${user.role}.`
             )
           : h('p', { class: 'muted' }, 'Loading…'),
-        h('button', {
-          class: 'btn',
-          onclick: async () => {
-            await postJson('/auth/logout');
-            window.location.assign('/login.html');
-          },
-        }, 'Sign out')
-      )
+        h('p', {},
+          user?.role === 'super_admin'
+            ? h('a', { href: '#/clients' }, 'Manage clients →')
+            : h('a', { href: '#/projects' }, 'Your projects →'),
+        ),
+      ),
     );
   },
+  clients,
+  clientDetail,
+  projects,
+  projectDetail,
 };
 
+const navHost = document.getElementById('nav');
 const mount = document.getElementById('app');
 
 (async () => {
@@ -32,8 +40,8 @@ const mount = document.getElementById('app');
     const me = await getJson('/api/me');
     set({ currentUser: me });
   } catch {
-    // 401 path is handled inside api.js (redirect to /login.html).
     return;
   }
+  mountNav(state.currentUser, navHost);
   startRouter(handlers, mount);
 })();

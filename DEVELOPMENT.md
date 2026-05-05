@@ -192,7 +192,7 @@ Each stage is independently shippable. After each stage: deploy to fly, smoke `/
 **Tests.** Bootstrap creates super-admin; magic-link token is one-shot and SHA-256 hashed; CSRF rejects mismatched header; rate limiter trips. E2E `auth.spec.js` — request magic link, follow stdout-logged URL via `E2E_EMAIL_LOG`.
 **Verification.** Magic-link login as super-admin works; CSRF cookie set; `/api/me` returns role.
 
-### Stage 2 — Clients, Projects, Members
+### Stage 2 — DONE Clients, Projects, Members
 **Scope.** Migration `0003_clients_projects.sql`. `services/clients.js` (CRUD + archive, super-admin only). `services/projects.js` (CRUD; subs see only their memberships). `services/projectMembers.js` (`add`, `updateRate` writes `audit_changes` with old/new + display names, `remove` soft-deletes; **strips `bill_rate_cents` from non-super-admin payloads**). `middleware/requireProjectMember.js`. Routes: `/api/clients`, `/api/projects`, nested `/api/projects/:id/members`. Frontend views: `clients`, `clientDetail`, `projects`, `projectDetail` (members tab — only super-admin sees the rate column). `nav.js` shows different links per role.
 **Tests.** Sub cannot create a client; sub `GET /api/projects` returns only their memberships; rate field stripped from sub responses; rate change writes audit. E2E: super-admin creates client + project + adds a sub at $X/hr; logs in as sub, sees project but no rate.
 

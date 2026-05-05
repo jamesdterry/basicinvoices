@@ -4,6 +4,10 @@
 
 export const ROUTES = [
   { name: 'home', match: (parts) => (parts.length === 0 ? {} : null) },
+  { name: 'clients', match: (parts) => (parts.length === 1 && parts[0] === 'clients' ? {} : null) },
+  { name: 'clientDetail', match: (parts) => (parts.length === 2 && parts[0] === 'clients' ? { id: parts[1] } : null) },
+  { name: 'projects', match: (parts) => (parts.length === 1 && parts[0] === 'projects' ? {} : null) },
+  { name: 'projectDetail', match: (parts) => (parts.length === 2 && parts[0] === 'projects' ? { id: parts[1] } : null) },
 ];
 
 export function parseHash(hash) {

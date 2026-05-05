@@ -56,3 +56,94 @@ h1 { font-size: 1.75rem; margin: 0 0 1rem; }
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.btn.secondary {
+  background: var(--bg);
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+.btn.danger {
+  background: var(--bg);
+  color: #b00020;
+  border-color: var(--border);
+}
+
+#nav {
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  font-size: 0.95rem;
+}
+
+#nav .brand {
+  font-weight: 600;
+}
+
+#nav a {
+  color: var(--fg);
+  text-decoration: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius);
+}
+
+#nav a.active {
+  background: rgba(42, 109, 244, 0.1);
+  color: var(--accent);
+}
+
+.spacer { flex: 1; }
+
+main.wide {
+  max-width: 60rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+th {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+td a { color: var(--accent); text-decoration: none; }
+td a:hover { text-decoration: underline; }
+
+.field { display: flex; flex-direction: column; gap: 0.25rem; }
+.field label { font-size: 0.85rem; color: var(--muted); }
+.field input, .field textarea, .field select { font: inherit; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--fg); }
+.field textarea { min-height: 4rem; resize: vertical; }
+
+.error {
+  color: #b00020;
+  font-size: 0.9rem;
+}
+
+.archived {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tag {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  margin-left: 0.5rem;
+}
