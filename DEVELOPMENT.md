@@ -201,13 +201,13 @@ Each stage is independently shippable. After each stage: deploy to fly, smoke `/
 **Tests.** Cannot edit locked; sub cannot post on a project they aren't a member of; super-admin can post on behalf. E2E: sub logs four entries across the week; super-admin sees them in project view.
 
 ### Stage 4 — Expenses + Milestones
-**Scope.** Migration `0005_expenses_milestones.sql`. `services/expenses.js`, `services/milestones.js` — super-admin only; same `invoice_id` lock pattern; CRUD. Routes mirror time entries (`/api/expenses`, `/api/milestones`). Project detail page gets two new tabs.
+**Scope.** Migration `0005_expenses_milestones.sql`. `services/expenses.js`, `services/milestones.js` — super-admin only; same `invoice_id` lock pattern as `services/timeEntries.js` (NULL column declared without FK; rebuilt to add the real FK in Stage 5 alongside `time_entries`). CRUD. Routes mirror time entries (`/api/expenses`, `/api/milestones`). Project detail page gets two new tabs.
 **Tests.** Sub gets 403 on all expense/milestone endpoints; locked rows reject mutation.
 
 ### Stage 5 — Manual invoices + public web view
-**Scope.** Migration `0006_invoices.sql` (invoices + invoice_lines, then a table-rebuild to add the `time_entries.invoice_id` FK that Stage 3 deferred). `services/invoices.js`:
+**Scope.** Migration `0006_invoices.sql` — creates `invoices` + `invoice_lines`, then does a table-rebuild on `time_entries` (and on Stage 4's `expenses` + `milestones`) to add the real `invoice_id` FK with `ON DELETE SET NULL`. The 12-step rebuild dance per SQLite docs: `PRAGMA foreign_keys = OFF` → `BEGIN` → create new table with FK → copy rows → drop old → rename → recreate indexes → `PRAGMA foreign_key_check` → `COMMIT` → `PRAGMA foreign_keys = ON`. (Stages 3 and 4 declared the column without an FK because SQLite refuses INSERTs on a child whose declared parent table doesn't exist yet, even with NULL FK values.) `services/invoices.js`:
 - `previewDraft(projectId, throughDate)` — read-only.
-- `createDraft(projectId, { throughDate, issueDate, dueDate, notes })` — single transaction: pulls all `time_entries`/`expenses`/`milestones` for the project where `invoice_id IS NULL` and `date <= throughDate`; creates invoice (number `YYYY-NNNN` via `MAX+1` per year inside the txn); creates `invoice_lines` with `unit_rate_cents` **snapshotted** from `project_members.bill_rate_cents`; `UPDATE` source rows to set `invoice_id`. Audits.
+- `createDraft(projectId, { throughDate, issueDate, dueDate, notes })` — single transaction: pulls all `time_entries`/`expenses`/`milestones` for the project where `invoice_id IS NULL` and `date <= throughDate`; creates invoice (number `YYYY-NNNN` via `MAX+1` per year inside the txn); creates `invoice_lines` with `unit_rate_cents` **snapshotted** from `project_members.bill_rate_cents` for the row's `user_id`; `UPDATE` source rows to set `invoice_id`. Audits. (Note: every billable time entry has a corresponding active `project_members` row by Stage 3 invariant, so the rate join is always satisfied.)
 - `updateDraft(invoiceId, …)` — drafts only; notes, lines, line desc/sort, dates, Stripe link.
 - `send(invoiceId)` — `draft → sent`, sets `sent_at`. (Email wired in Stage 6.)
 - `void(invoiceId)` — detaches lines (`UPDATE … SET invoice_id = NULL`), status `void`.
@@ -227,7 +227,7 @@ Routes: full CRUD + `POST /api/invoices/:id/send`, `…/void`, `…/rotate-token
 **Tests.** Partial leaves status `sent`; sum flips to `paid`; deleting recomputes correctly. E2E: two partial payments summing to total → status flips, audit entries exist.
 
 ### Stage 8 — Recurring billing
-**Scope.** Migration `0008_recurring_schedules.sql`. `services/recurring.js` — `setSchedule`, `pause`, `resume`, `runDue(now = new Date())`. For each row where `paused_at IS NULL AND next_run_date <= today`:
+**Scope.** Migration `0008_recurring_schedules.sql`. `services/recurring.js` — `setSchedule`, `pause`, `resume`, `runDue(now = new Date())`. The `runDue` actor is a synthetic system user (`{ id: null, role: 'super_admin' }`) so audit rows attribute correctly; `services/timeEntries.js` and friends accept `actorId == null` (admin_audit row stores NULL). For each row where `paused_at IS NULL AND next_run_date <= today`:
 - mode `time_and_expenses`: `invoices.createDraft(projectId, { throughDate: today })`.
 - mode `fixed_milestone`: insert a `milestones` row with `fixed_amount_cents` + `fixed_description`, then `invoices.createDraft(...)` so the milestone gets pulled in (single code path).
 - Update `last_run_date`, `last_invoice_id`, advance `next_run_date` by one calendar month (clamped to `day_of_month` ≤ 28).
@@ -254,9 +254,9 @@ The five files most central to the build; everything else hangs off these:
 
 ## End-to-end verification (post-Stage 9)
 
-1. `npm run dev` → log in as super-admin via magic link.
+1. `npm run dev` (loads `.env` via `--env-file-if-exists`) → log in as super-admin via magic link (printed as a `dev-email` JSON line on stdout when `SMTP_HOST` is unset).
 2. Create a client, then a project under it.
-3. Create a fake subcontractor user; add them to the project at $X/hr.
+3. Add the seeded sub (`scripts/seed-e2e.js` for e2e; in dev, insert one via the `sqlite3` snippet in AGENTS.md) to the project at $X/hr. Optionally add the super-admin to the same project at their own rate to verify self-bill.
 4. Log out, log in as the sub via magic link; confirm "my hours" view shows only their projects and no rates anywhere on the page.
 5. Sub logs 4 hours over 2 days. Log out.
 6. Super-admin adds an expense and a milestone to the project.

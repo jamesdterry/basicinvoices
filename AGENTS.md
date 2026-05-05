@@ -9,6 +9,7 @@ Cookie prefix:      bi_   (bi_session, bi_csrf)
 Departures:
   - Two roles only; no per-project role tiers.
   - Subs never see rates or invoices; their UI is "log my hours".
+  - Super-admin can also be a project_member at a per-project rate (self-bill).
   - Public unauthenticated invoice view at /i/<token> (HTML + PDF).
   - Daily in-process recurring-billing timer; min_machines_running = 1 in prod.
   - USD only in v1; no currency column anywhere.
@@ -33,7 +34,8 @@ Open-source invoicing aimed at solo consultants. Vanilla JS/CSS/HTML on a Node +
 - **App shell auth:** `/` and `/index.html` are gated by `loadSessionFromCookie` (exported from `middleware/requireUser.js`); other static assets are public. `/i/<token>` (public invoice view) is also public and **does not consult the session cookie**.
 - **Migrations:** append-only `server/db/migrations/*.sql`; never edit a shipped migration.
 - **Transactions:** any multi-table write runs inside `db.transaction(...)`.
-- **Permissions:** access gates live in middleware (`requireUser`, `requireSuperAdmin`, `requireProjectMember`) and are applied at the route layer. Services own role-aware *filtering* — `services/projects.js#listForUser` narrows by membership, and `services/projectMembers.js#stripRates` removes `bill_rate_cents` from non-super-admin payloads (reused downstream on time entries, invoice previews, etc.).
+- **Permissions:** access gates live in middleware (`requireUser`, `requireSuperAdmin`, `requireProjectMember`) and are applied at the route layer. Services own role-aware *filtering* — `services/projects.js#listForUser` narrows by membership, `services/projectMembers.js#stripRates` removes `bill_rate_cents` from non-super-admin payloads (reusable for any future payload that joins in a rate), and `services/timeEntries.js#list` forces sub callers to their own rows + memberships.
+- **Locking on invoice:** time entries (and, in later stages, expenses + milestones) become read-only once `invoice_id` is set. Mutating a locked row returns 409 `'locked'`. Stage 5 invoice creation snapshots `unit_rate_cents` from `project_members` and writes `invoice_id` on the source rows; `void`/`deleteDraft` clear it.
 - **History:** services write to `admin_audit` + `audit_changes` via `services/audit.js#logAction`. Resolve FK ids to display strings (e.g. "Acme — Website") before calling — the audit row is the human-readable record.
 - **Money:** stored as integer cents everywhere; rates are `INTEGER`-cents-per-hour; hours are `REAL`. USD only in v1, no currency column.
 - **Tests:** vitest + supertest in `test/` (fresh in-memory DB via `test/db.js`); Playwright + chromium in `e2e/` (file-backed `./data/e2e.sqlite` seeded by `scripts/seed-e2e.js`, server on `:8081` via `npm run start:e2e`, authed specs reuse `.auth/super_admin.json` and `.auth/subcontractor.json` storage state). Run e2e with `npm run e2e` (one-time `npm run e2e:install` for the browser).
