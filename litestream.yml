@@ -1,0 +1,15 @@
+# Litestream config — credentials are env-driven, never inlined.
+# Documented in WEBAPP_PLAYBOOK.md §6.
+
+dbs:
+  - path: /data/basicinvoices.sqlite
+    replicas:
+      - type: s3
+        bucket: ${BUCKET_NAME}
+        path: basicinvoices
+        endpoint: ${AWS_ENDPOINT_URL_S3}
+        region: ${AWS_REGION}
+        access-key-id: ${AWS_ACCESS_KEY_ID}
+        secret-access-key: ${AWS_SECRET_ACCESS_KEY}
+        retention: 168h
+        snapshot-interval: 24h
