@@ -16,7 +16,13 @@ export async function projectDetail({ id }, mount) {
     ({ members } = await getJson(`/api/projects/${numId}/members`));
     if (isAdmin) {
       ({ clients: clientList } = await getJson('/api/clients'));
-      ({ users: userPicks } = await getJson('/api/users?role=subcontractor'));
+      // Subs are the common case but the super-admin can also self-bill at a
+      // per-project rate (AGENTS.md domain glossary), so include both roles.
+      const [subRes, adminRes] = await Promise.all([
+        getJson('/api/users?role=subcontractor'),
+        getJson('/api/users?role=super_admin'),
+      ]);
+      userPicks = [...(subRes.users || []), ...(adminRes.users || [])];
     }
   } catch (err) {
     mount.replaceChildren(h('main', { class: 'wide stack' },
@@ -68,11 +74,12 @@ export async function projectDetail({ id }, mount) {
 
   function addMemberForm() {
     const select = h('select', { name: 'user_id' });
-    select.appendChild(h('option', { value: '' }, '— pick a subcontractor —'));
+    select.appendChild(h('option', { value: '' }, '— pick a member —'));
     const activeIds = new Set(members.map((m) => m.user_id));
     for (const u of userPicks) {
       if (activeIds.has(u.id)) continue;
-      select.appendChild(h('option', { value: String(u.id) }, `${u.display_name} (${u.email})`));
+      const label = `${u.display_name} (${u.email})${u.role === 'super_admin' ? ' — admin' : ''}`;
+      select.appendChild(h('option', { value: String(u.id) }, label));
     }
     const rateInput = h('input', { type: 'number', step: '0.01', min: '0', placeholder: '125.00' });
     const error = h('div', { class: 'error', hidden: true });
@@ -90,7 +97,7 @@ export async function projectDetail({ id }, mount) {
         try {
           const userId = Number(select.value);
           const cents = Math.round(Number(rateInput.value) * 100);
-          if (!userId) throw new Error('Pick a subcontractor');
+          if (!userId) throw new Error('Pick a member');
           if (!Number.isFinite(cents) || cents < 0) throw new Error('Invalid rate');
           await postJson(`/api/projects/${numId}/members`, {
             user_id: userId,
@@ -107,8 +114,8 @@ export async function projectDetail({ id }, mount) {
         }
       },
     },
-      h('h3', {}, 'Add subcontractor'),
-      h('div', { class: 'field' }, h('label', {}, 'Subcontractor'), select),
+      h('h3', {}, 'Add member'),
+      h('div', { class: 'field' }, h('label', {}, 'Member'), select),
       h('div', { class: 'field' }, h('label', {}, 'Bill rate ($/hr)'), rateInput),
       error,
       h('div', { class: 'row' }, submit, cancel),
@@ -163,7 +170,7 @@ export async function projectDetail({ id }, mount) {
       isAdmin && !addingMember
         ? h('button', { class: 'btn',
             onclick: () => { addingMember = true; render(); },
-          }, 'Add subcontractor')
+          }, 'Add member')
         : null,
     );
 

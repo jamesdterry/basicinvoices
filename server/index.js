@@ -11,6 +11,7 @@ import { authRouter } from './routes/auth.js';
 import { meRouter } from './routes/me.js';
 import { clientsRouter } from './routes/clients.js';
 import { projectsRouter } from './routes/projects.js';
+import { timeEntriesRouter } from './routes/timeEntries.js';
 import { usersRouter } from './routes/users.js';
 import { csrf } from './middleware/csrf.js';
 import { loadSessionFromCookie, gateAppShell } from './middleware/requireUser.js';
@@ -53,6 +54,7 @@ export function createApp() {
   app.use('/api/me', meRouter);
   app.use('/api/clients', clientsRouter);
   app.use('/api/projects', projectsRouter);
+  app.use('/api/time-entries', timeEntriesRouter);
   app.use('/api/users', usersRouter);
 
   // App-shell gating: only / and /index.html require a session. Everything

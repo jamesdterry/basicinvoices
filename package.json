@@ -10,8 +10,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node --watch server/index.js",
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "dev": "node --env-file-if-exists=.env --watch server/index.js",
     "start:e2e": "NODE_ENV=test PORT=8081 DB_PATH=./data/e2e.sqlite SMTP_HOST= E2E_EMAIL_LOG=./data/e2e-emails.log SUPER_ADMIN_EMAIL=admin@example.com BASE_URL=http://localhost:8081 SESSION_SECRET=e2e-test-secret-do-not-use-anywhere-else node server/index.js",
     "migrate": "node scripts/migrate.js",
     "db:reset": "rm -f data/*.sqlite data/*.sqlite-* && npm run migrate",

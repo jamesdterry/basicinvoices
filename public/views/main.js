@@ -6,6 +6,7 @@ import { clients } from '/views/clients.js';
 import { clientDetail } from '/views/clientDetail.js';
 import { projects } from '/views/projects.js';
 import { projectDetail } from '/views/projectDetail.js';
+import { timeEntries } from '/views/timeEntries.js';
 
 const handlers = {
   home(_params, mount) {
@@ -30,6 +31,7 @@ const handlers = {
   clientDetail,
   projects,
   projectDetail,
+  timeEntries,
 };
 
 const navHost = document.getElementById('nav');

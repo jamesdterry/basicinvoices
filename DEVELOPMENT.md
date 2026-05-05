@@ -196,7 +196,7 @@ Each stage is independently shippable. After each stage: deploy to fly, smoke `/
 **Scope.** Migration `0003_clients_projects.sql`. `services/clients.js` (CRUD + archive, super-admin only). `services/projects.js` (CRUD; subs see only their memberships). `services/projectMembers.js` (`add`, `updateRate` writes `audit_changes` with old/new + display names, `remove` soft-deletes; **strips `bill_rate_cents` from non-super-admin payloads**). `middleware/requireProjectMember.js`. Routes: `/api/clients`, `/api/projects`, nested `/api/projects/:id/members`. Frontend views: `clients`, `clientDetail`, `projects`, `projectDetail` (members tab — only super-admin sees the rate column). `nav.js` shows different links per role.
 **Tests.** Sub cannot create a client; sub `GET /api/projects` returns only their memberships; rate field stripped from sub responses; rate change writes audit. E2E: super-admin creates client + project + adds a sub at $X/hr; logs in as sub, sees project but no rate.
 
-### Stage 3 — Time entry
+### Stage 3 — DONE Time entry
 **Scope.** Migration `0004_time_entries.sql`. `services/timeEntries.js` — `create` (caller must be project member or super-admin; super-admin can post on behalf of a sub via `actAsUserId`); `update`/`delete` reject when `invoice_id IS NOT NULL` (locked → 409); `list({ projectId?, userId?, from?, to?, includeLocked? })`. Routes: GET/POST/PATCH/DELETE `/api/time-entries`. View: `timeEntries.js` — sub sees "my hours this week" with quick-add row; super-admin gets project + user filters via `filters.js` (URL ↔ localStorage round-trip).
 **Tests.** Cannot edit locked; sub cannot post on a project they aren't a member of; super-admin can post on behalf. E2E: sub logs four entries across the week; super-admin sees them in project view.
 
@@ -205,7 +205,7 @@ Each stage is independently shippable. After each stage: deploy to fly, smoke `/
 **Tests.** Sub gets 403 on all expense/milestone endpoints; locked rows reject mutation.
 
 ### Stage 5 — Manual invoices + public web view
-**Scope.** Migration `0006_invoices.sql` (invoices + invoice_lines). `services/invoices.js`:
+**Scope.** Migration `0006_invoices.sql` (invoices + invoice_lines, then a table-rebuild to add the `time_entries.invoice_id` FK that Stage 3 deferred). `services/invoices.js`:
 - `previewDraft(projectId, throughDate)` — read-only.
 - `createDraft(projectId, { throughDate, issueDate, dueDate, notes })` — single transaction: pulls all `time_entries`/`expenses`/`milestones` for the project where `invoice_id IS NULL` and `date <= throughDate`; creates invoice (number `YYYY-NNNN` via `MAX+1` per year inside the txn); creates `invoice_lines` with `unit_rate_cents` **snapshotted** from `project_members.bill_rate_cents`; `UPDATE` source rows to set `invoice_id`. Audits.
 - `updateDraft(invoiceId, …)` — drafts only; notes, lines, line desc/sort, dates, Stripe link.
