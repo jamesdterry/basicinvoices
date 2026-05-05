@@ -2,6 +2,14 @@ import { h, state } from '/lib/state.js';
 import { getJson, patchJson, postJson, deleteJson } from '/lib/api.js';
 import { ProjectForm } from '/components/projectForm.js';
 import { MemberRow } from '/components/memberRow.js';
+import { ExpenseForm } from '/components/expenseForm.js';
+import { MilestoneForm } from '/components/milestoneForm.js';
+
+function formatMoney(cents) {
+  if (cents == null) return '';
+  const n = Number(cents) / 100;
+  return `$${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/, ',')}`;
+}
 
 export async function projectDetail({ id }, mount) {
   mount.replaceChildren(h('main', { class: 'wide stack' }, h('p', { class: 'muted' }, 'Loading…')));
@@ -11,6 +19,8 @@ export async function projectDetail({ id }, mount) {
   let project, members;
   let clientList = [];
   let userPicks = [];
+  let expenses = [];
+  let milestones = [];
   try {
     ({ project } = await getJson(`/api/projects/${numId}`));
     ({ members } = await getJson(`/api/projects/${numId}/members`));
@@ -18,11 +28,15 @@ export async function projectDetail({ id }, mount) {
       ({ clients: clientList } = await getJson('/api/clients'));
       // Subs are the common case but the super-admin can also self-bill at a
       // per-project rate (AGENTS.md domain glossary), so include both roles.
-      const [subRes, adminRes] = await Promise.all([
+      const [subRes, adminRes, expRes, milRes] = await Promise.all([
         getJson('/api/users?role=subcontractor'),
         getJson('/api/users?role=super_admin'),
+        getJson(`/api/expenses?project_id=${numId}&include_locked=1`),
+        getJson(`/api/milestones?project_id=${numId}&include_locked=1`),
       ]);
       userPicks = [...(subRes.users || []), ...(adminRes.users || [])];
+      expenses = expRes.entries || [];
+      milestones = milRes.entries || [];
     }
   } catch (err) {
     mount.replaceChildren(h('main', { class: 'wide stack' },
@@ -34,9 +48,21 @@ export async function projectDetail({ id }, mount) {
 
   let editing = false;
   let addingMember = false;
+  let addingExpense = false;
+  let editingExpenseId = null;
+  let addingMilestone = false;
+  let editingMilestoneId = null;
 
   async function refreshMembers() {
     ({ members } = await getJson(`/api/projects/${numId}/members`));
+  }
+  async function refreshExpenses() {
+    const { entries } = await getJson(`/api/expenses?project_id=${numId}&include_locked=1`);
+    expenses = entries || [];
+  }
+  async function refreshMilestones() {
+    const { entries } = await getJson(`/api/milestones?project_id=${numId}&include_locked=1`);
+    milestones = entries || [];
   }
 
   function memberTable() {
@@ -122,6 +148,194 @@ export async function projectDetail({ id }, mount) {
     );
   }
 
+  function expensesSection() {
+    const tbody = h('tbody');
+    if (!expenses.length) {
+      tbody.appendChild(h('tr', {},
+        h('td', { colspan: '4', class: 'muted' }, 'No expenses yet.'),
+      ));
+    }
+    for (const x of expenses) {
+      if (editingExpenseId === x.id) {
+        tbody.appendChild(h('tr', {},
+          h('td', { colspan: '4' },
+            ExpenseForm({
+              defaults: x,
+              submitLabel: 'Save',
+              onSave: async (payload) => {
+                await patchJson(`/api/expenses/${x.id}`, payload);
+                editingExpenseId = null;
+                await refreshExpenses();
+                render();
+              },
+              onCancel: () => { editingExpenseId = null; render(); },
+            }),
+          ),
+        ));
+        continue;
+      }
+      const actions = h('td', {});
+      if (x.locked) {
+        actions.appendChild(h('span', { class: 'tag' }, 'invoiced'));
+      } else {
+        actions.appendChild(h('button', {
+          class: 'btn secondary',
+          onclick: () => { editingExpenseId = x.id; render(); },
+        }, 'Edit'));
+        actions.appendChild(h('button', {
+          class: 'btn danger',
+          onclick: async () => {
+            if (!window.confirm('Delete this expense?')) return;
+            try {
+              await deleteJson(`/api/expenses/${x.id}`);
+              await refreshExpenses();
+              render();
+            } catch (err) {
+              window.alert(err?.body?.error || err?.message || 'Delete failed');
+            }
+          },
+        }, 'Delete'));
+      }
+      tbody.appendChild(h('tr', {},
+        h('td', {}, x.expense_date),
+        h('td', {}, x.description || ''),
+        h('td', {}, formatMoney(x.amount_cents)),
+        actions,
+      ));
+    }
+
+    const header = h('div', { class: 'row' },
+      h('h2', {}, 'Expenses'),
+      h('span', { class: 'spacer' }),
+      !addingExpense
+        ? h('button', { class: 'btn',
+            onclick: () => { addingExpense = true; render(); },
+          }, 'Add expense')
+        : null,
+    );
+
+    const addForm = addingExpense
+      ? ExpenseForm({
+          submitLabel: 'Save expense',
+          onSave: async (payload) => {
+            await postJson('/api/expenses', { project_id: numId, ...payload });
+            addingExpense = false;
+            await refreshExpenses();
+            render();
+          },
+          onCancel: () => { addingExpense = false; render(); },
+        })
+      : null;
+
+    return h('section', { class: 'stack' },
+      header,
+      addForm,
+      h('table', {},
+        h('thead', {}, h('tr', {},
+          h('th', {}, 'Date'),
+          h('th', {}, 'Description'),
+          h('th', {}, 'Amount'),
+          h('th', {}, ''),
+        )),
+        tbody,
+      ),
+    );
+  }
+
+  function milestonesSection() {
+    const tbody = h('tbody');
+    if (!milestones.length) {
+      tbody.appendChild(h('tr', {},
+        h('td', { colspan: '4', class: 'muted' }, 'No milestones yet.'),
+      ));
+    }
+    for (const m of milestones) {
+      if (editingMilestoneId === m.id) {
+        tbody.appendChild(h('tr', {},
+          h('td', { colspan: '4' },
+            MilestoneForm({
+              defaults: m,
+              submitLabel: 'Save',
+              onSave: async (payload) => {
+                await patchJson(`/api/milestones/${m.id}`, payload);
+                editingMilestoneId = null;
+                await refreshMilestones();
+                render();
+              },
+              onCancel: () => { editingMilestoneId = null; render(); },
+            }),
+          ),
+        ));
+        continue;
+      }
+      const actions = h('td', {});
+      if (m.locked) {
+        actions.appendChild(h('span', { class: 'tag' }, 'invoiced'));
+      } else {
+        actions.appendChild(h('button', {
+          class: 'btn secondary',
+          onclick: () => { editingMilestoneId = m.id; render(); },
+        }, 'Edit'));
+        actions.appendChild(h('button', {
+          class: 'btn danger',
+          onclick: async () => {
+            if (!window.confirm('Delete this milestone?')) return;
+            try {
+              await deleteJson(`/api/milestones/${m.id}`);
+              await refreshMilestones();
+              render();
+            } catch (err) {
+              window.alert(err?.body?.error || err?.message || 'Delete failed');
+            }
+          },
+        }, 'Delete'));
+      }
+      tbody.appendChild(h('tr', {},
+        h('td', {}, m.milestone_date),
+        h('td', {}, m.description || ''),
+        h('td', {}, formatMoney(m.amount_cents)),
+        actions,
+      ));
+    }
+
+    const header = h('div', { class: 'row' },
+      h('h2', {}, 'Milestones'),
+      h('span', { class: 'spacer' }),
+      !addingMilestone
+        ? h('button', { class: 'btn',
+            onclick: () => { addingMilestone = true; render(); },
+          }, 'Add milestone')
+        : null,
+    );
+
+    const addForm = addingMilestone
+      ? MilestoneForm({
+          submitLabel: 'Save milestone',
+          onSave: async (payload) => {
+            await postJson('/api/milestones', { project_id: numId, ...payload });
+            addingMilestone = false;
+            await refreshMilestones();
+            render();
+          },
+          onCancel: () => { addingMilestone = false; render(); },
+        })
+      : null;
+
+    return h('section', { class: 'stack' },
+      header,
+      addForm,
+      h('table', {},
+        h('thead', {}, h('tr', {},
+          h('th', {}, 'Date'),
+          h('th', {}, 'Description'),
+          h('th', {}, 'Amount'),
+          h('th', {}, ''),
+        )),
+        tbody,
+      ),
+    );
+  }
+
   function render() {
     const detail = editing
       ? ProjectForm({
@@ -184,6 +398,8 @@ export async function projectDetail({ id }, mount) {
         memberHeader,
         addingMember ? addMemberForm() : null,
         memberTable(),
+        isAdmin ? expensesSection() : null,
+        isAdmin ? milestonesSection() : null,
       ),
     );
   }

@@ -200,8 +200,8 @@ Each stage is independently shippable. After each stage: deploy to fly, smoke `/
 **Scope.** Migration `0004_time_entries.sql`. `services/timeEntries.js` — `create` (caller must be project member or super-admin; super-admin can post on behalf of a sub via `actAsUserId`); `update`/`delete` reject when `invoice_id IS NOT NULL` (locked → 409); `list({ projectId?, userId?, from?, to?, includeLocked? })`. Routes: GET/POST/PATCH/DELETE `/api/time-entries`. View: `timeEntries.js` — sub sees "my hours this week" with quick-add row; super-admin gets project + user filters via `filters.js` (URL ↔ localStorage round-trip).
 **Tests.** Cannot edit locked; sub cannot post on a project they aren't a member of; super-admin can post on behalf. E2E: sub logs four entries across the week; super-admin sees them in project view.
 
-### Stage 4 — Expenses + Milestones
-**Scope.** Migration `0005_expenses_milestones.sql`. `services/expenses.js`, `services/milestones.js` — super-admin only; same `invoice_id` lock pattern as `services/timeEntries.js` (NULL column declared without FK; rebuilt to add the real FK in Stage 5 alongside `time_entries`). CRUD. Routes mirror time entries (`/api/expenses`, `/api/milestones`). Project detail page gets two new tabs.
+### Stage 4 — DONE Expenses + Milestones
+**Scope.** Migration `0005_expenses_milestones.sql`. `services/expenses.js`, `services/milestones.js` — super-admin only; same `invoice_id` lock pattern as `services/timeEntries.js` (NULL column declared without FK; rebuilt to add the real FK in Stage 5 alongside `time_entries`). CRUD. Routes mirror time entries (`/api/expenses`, `/api/milestones`), guarded by `requireSuperAdmin`. Project detail page gets two new stacked sections (Expenses, Milestones) below Members; subs see only Details + Members. Reused `formatMoney(cents) → '$1,234.56'` is local to each service for audit summaries; the `public/lib/money.js` helper mentioned in the playbook lands in a later stage.
 **Tests.** Sub gets 403 on all expense/milestone endpoints; locked rows reject mutation.
 
 ### Stage 5 — Manual invoices + public web view
