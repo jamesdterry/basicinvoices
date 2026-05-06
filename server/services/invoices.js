@@ -106,7 +106,8 @@ function rowToLine(row) {
 function getInvoiceRow(db, id) {
   return db
     .prepare(
-      `SELECT i.*, c.name AS client_name, p.name AS project_name
+      `SELECT i.*, c.name AS client_name, c.contact_email AS client_contact_email,
+              p.name AS project_name
          FROM invoices i
          JOIN clients c  ON c.id = i.client_id
          JOIN projects p ON p.id = i.project_id
@@ -491,6 +492,7 @@ export function send(db, id, { actor, ip } = {}) {
   const existing = getInvoiceRow(db, id);
   if (!existing) return { ok: false, reason: 'not_found' };
   if (existing.status !== 'draft') return { ok: false, reason: 'wrong_status' };
+  if (!existing.client_contact_email) return { ok: false, reason: 'no_client_email' };
 
   const at = nowIso();
   db.prepare(
@@ -507,6 +509,29 @@ export function send(db, id, { actor, ip } = {}) {
   });
 
   return { ok: true, invoice: rowToInvoice(getInvoiceRow(db, id)) };
+}
+
+export function resendEmail(db, id, { actor, ip } = {}) {
+  if (!actor) return { ok: false, reason: 'unauthorized' };
+  if (!isSuperAdmin(actor)) return { ok: false, reason: 'forbidden' };
+
+  const existing = getInvoiceRow(db, id);
+  if (!existing) return { ok: false, reason: 'not_found' };
+  if (existing.status !== 'sent' && existing.status !== 'paid') {
+    return { ok: false, reason: 'wrong_status' };
+  }
+  if (!existing.client_contact_email) return { ok: false, reason: 'no_client_email' };
+
+  logAction(db, {
+    actorId: actor.id,
+    action: 'invoice.resend_email',
+    targetKind: 'invoice',
+    targetId: id,
+    summary: `Re-sent invoice ${existing.number} to ${existing.client_name}`,
+    ip,
+  });
+
+  return { ok: true, invoice: rowToInvoice(existing) };
 }
 
 function detachAllSources(db, invoiceId) {

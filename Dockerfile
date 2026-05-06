@@ -20,10 +20,16 @@ RUN tar -xzf /tmp/litestream.tgz -C /usr/local/bin litestream \
  && rm /tmp/litestream.tgz \
  && chmod +x /usr/local/bin/litestream
 
-# Runtime libs needed by better-sqlite3 + chromium
+# Runtime libs needed by better-sqlite3 + chromium (Stage 6 PDF rendering
+# uses puppeteer-core + @sparticuz/chromium; the Chromium binary needs the
+# usual Debian X/font/sound stack even in headless mode).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl tini \
+      libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+      libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+      libgbm1 libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
+      fonts-liberation \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /app/node_modules ./node_modules

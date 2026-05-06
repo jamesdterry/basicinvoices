@@ -11,6 +11,7 @@ import {
   createDraft,
   updateDraft,
   send,
+  resendEmail,
   voidInvoice,
   deleteDraft,
   rotatePublicToken,
@@ -42,7 +43,11 @@ beforeEach(() => {
   admin = insertUser(db, 'admin@example.com', 'Admin', 'super_admin');
   sub = insertUser(db, 'sub@example.com', 'Sub Person', 'subcontractor');
 
-  const c = createClient(db, { name: 'Acme', payment_terms_days: 14 }, { actorId: admin.id });
+  const c = createClient(
+    db,
+    { name: 'Acme', payment_terms_days: 14, contact_email: 'billing@acme.example' },
+    { actorId: admin.id }
+  );
   const p = createProject(db, { client_id: c.client.id, name: 'Website' }, { actorId: admin.id });
   project = p.project;
 
@@ -315,6 +320,97 @@ describe('send', () => {
 
     const audit = db.prepare("SELECT * FROM admin_audit WHERE action = 'invoice.send'").get();
     expect(audit.summary).toContain('2026-0001');
+  });
+
+  it('rejects with no_client_email when client has no contact_email', () => {
+    db.prepare('UPDATE clients SET contact_email = NULL').run();
+    createTimeEntry(
+      db,
+      { project_id: project.id, entry_date: '2026-05-04', hours: 1, description: 'Work' },
+      { actor: sub }
+    );
+    const r = createDraft(db, draftPayload(), { actor: admin });
+    const s = send(db, r.invoice.id, { actor: admin });
+    expect(s.ok).toBe(false);
+    expect(s.reason).toBe('no_client_email');
+
+    const after = db.prepare('SELECT status FROM invoices WHERE id = ?').get(r.invoice.id);
+    expect(after.status).toBe('draft');
+
+    const audit = db.prepare("SELECT * FROM admin_audit WHERE action = 'invoice.send'").get();
+    expect(audit).toBeUndefined();
+  });
+});
+
+describe('resendEmail', () => {
+  function setupSent() {
+    createTimeEntry(
+      db,
+      { project_id: project.id, entry_date: '2026-05-04', hours: 1, description: 'Work' },
+      { actor: sub }
+    );
+    const r = createDraft(db, draftPayload(), { actor: admin });
+    send(db, r.invoice.id, { actor: admin });
+    return r.invoice.id;
+  }
+
+  it('rejects subs', () => {
+    const id = setupSent();
+    const r = resendEmail(db, id, { actor: sub });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('forbidden');
+  });
+
+  it('rejects drafts', () => {
+    createTimeEntry(
+      db,
+      { project_id: project.id, entry_date: '2026-05-04', hours: 1, description: 'Work' },
+      { actor: sub }
+    );
+    const r = createDraft(db, draftPayload(), { actor: admin });
+    const out = resendEmail(db, r.invoice.id, { actor: admin });
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('wrong_status');
+  });
+
+  it('rejects void invoices', () => {
+    const id = setupSent();
+    voidInvoice(db, id, { actor: admin });
+    const out = resendEmail(db, id, { actor: admin });
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('wrong_status');
+  });
+
+  it('rejects when client has no email', () => {
+    const id = setupSent();
+    db.prepare('UPDATE clients SET contact_email = NULL').run();
+    const out = resendEmail(db, id, { actor: admin });
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('no_client_email');
+  });
+
+  it('writes invoice.resend_email audit on a sent invoice', () => {
+    const id = setupSent();
+    const before = db.prepare("SELECT COUNT(*) AS n FROM admin_audit WHERE action = 'invoice.resend_email'").get();
+    expect(before.n).toBe(0);
+
+    const out = resendEmail(db, id, { actor: admin });
+    expect(out.ok).toBe(true);
+
+    const after = db
+      .prepare("SELECT * FROM admin_audit WHERE action = 'invoice.resend_email'")
+      .all();
+    expect(after).toHaveLength(1);
+    expect(after[0].summary).toMatch(/^Re-sent invoice 2026-\d{4} to Acme$/);
+  });
+
+  it('does not mutate invoice rows', () => {
+    const id = setupSent();
+    const before = db.prepare('SELECT updated_at, sent_at FROM invoices WHERE id = ?').get(id);
+    resendEmail(db, id, { actor: admin });
+    const after = db.prepare('SELECT updated_at, sent_at FROM invoices WHERE id = ?').get(id);
+    expect(after.updated_at).toBe(before.updated_at);
+    expect(after.sent_at).toBe(before.sent_at);
   });
 });
 

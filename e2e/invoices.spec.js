@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
 
 async function csrfHeaders(request) {
   await request.get('/healthz');
@@ -22,11 +24,26 @@ function plusDays(iso, n) {
   return d.toISOString().slice(0, 10);
 }
 
+function readEmailLog() {
+  const p = path.join(process.cwd(), 'data', 'e2e-emails.log');
+  if (!fs.existsSync(p)) return [];
+  return fs
+    .readFileSync(p, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    })
+    .filter(Boolean);
+}
+
 test.describe.serial('invoices', () => {
   let projectId;
+  let clientId;
   let subId;
   let memberId;
   let invoiceId;
+  let invoiceNumber;
   let publicToken;
 
   test.describe('super-admin setup + sub logs hours', () => {
@@ -46,6 +63,7 @@ test.describe.serial('invoices', () => {
       });
       expect(cRes.status()).toBe(201);
       const { client } = await cRes.json();
+      clientId = client.id;
 
       const pRes = await request.post('/api/projects', {
         headers,
@@ -117,6 +135,7 @@ test.describe.serial('invoices', () => {
       expect(cRes.status()).toBe(201);
       const { invoice } = await cRes.json();
       invoiceId = invoice.id;
+      invoiceNumber = invoice.number;
       publicToken = invoice.public_token;
 
       expect(invoice.status).toBe('draft');
@@ -158,6 +177,133 @@ test.describe.serial('invoices', () => {
       });
       expect(editRes.status()).toBe(409);
       await ctx.close();
+    });
+  });
+
+  test.describe('send + PDF + resend', () => {
+    test.use({ storageState: '.auth/super_admin.json' });
+
+    test('send rejects with 409 no_client_email when client has no email', async ({ request }) => {
+      const headers = await csrfHeaders(request);
+      const before = await request.post(`/api/invoices/${invoiceId}/send`, { headers });
+      expect(before.status()).toBe(409);
+      const body = await before.json();
+      expect(body.error).toBe('no_client_email');
+
+      const detail = await (await request.get(`/api/invoices/${invoiceId}`)).json();
+      expect(detail.invoice.status).toBe('draft');
+    });
+
+    test('after adding contact_email, send transitions to sent and logs an email + PDF attachment', async ({ request }) => {
+      const headers = await csrfHeaders(request);
+      const patchRes = await request.patch(`/api/clients/${clientId}`, {
+        headers,
+        data: { contact_email: 'billing@invoice-e2e.example' },
+      });
+      expect(patchRes.status()).toBe(200);
+
+      const sendRes = await request.post(`/api/invoices/${invoiceId}/send`, { headers });
+      expect(sendRes.status()).toBe(200);
+      const sendBody = await sendRes.json();
+      expect(sendBody.invoice.status).toBe('sent');
+      expect(sendBody.email).toBeTruthy();
+      expect(sendBody.email.ok).toBe(true);
+
+      // Wait briefly to allow the dev-email log line to flush.
+      await expect.poll(() => {
+        const log = readEmailLog();
+        return log.find(
+          (e) =>
+            e.event === 'dev-email' &&
+            typeof e.subject === 'string' &&
+            e.subject.includes(invoiceNumber)
+        );
+      }, { timeout: 5000 }).toBeTruthy();
+
+      const log = readEmailLog();
+      const entry = log.find((e) => e.event === 'dev-email' && e.subject?.includes(invoiceNumber));
+      expect(entry.to).toBe('billing@invoice-e2e.example');
+      expect(entry.link).toContain(`/i/${publicToken}`);
+      expect(entry.attachments).toHaveLength(1);
+      expect(entry.attachments[0].filename).toBe(`Invoice-${invoiceNumber}.pdf`);
+      expect(entry.attachments[0].bytes).toBeGreaterThan(0);
+    });
+
+    test('GET /i/<token>.pdf serves a real PDF inline from a fresh browser context', async ({ browser }) => {
+      const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+      const res = await ctx.request.get(`/i/${publicToken}.pdf`);
+      expect(res.status()).toBe(200);
+      const headers = res.headers();
+      expect(headers['content-type']).toContain('application/pdf');
+      expect(headers['content-disposition']).toMatch(/^inline; filename="Invoice-\d{4}-\d{4}\.pdf"$/);
+      expect(headers['cache-control']).toBe('private, no-store');
+      expect(headers['x-robots-tag']).toBe('noindex');
+      const body = await res.body();
+      expect(body.length).toBeGreaterThan(100);
+      expect(body.slice(0, 5).toString('ascii')).toBe('%PDF-');
+      await ctx.close();
+    });
+
+    test('resend-email writes a second dev-email line without changing invoice state', async ({ request }) => {
+      const headers = await csrfHeaders(request);
+      const before = readEmailLog().filter((e) => e.subject?.includes(invoiceNumber)).length;
+
+      const r = await request.post(`/api/invoices/${invoiceId}/resend-email`, { headers });
+      expect(r.status()).toBe(200);
+      const body = await r.json();
+      expect(body.invoice.status).toBe('sent');
+      expect(body.email.ok).toBe(true);
+
+      await expect.poll(
+        () => readEmailLog().filter((e) => e.subject?.includes(invoiceNumber)).length,
+        { timeout: 5000 }
+      ).toBeGreaterThan(before);
+
+      // Audit row should exist with the new action.
+      const detail = await (await request.get(`/api/invoices/${invoiceId}`)).json();
+      expect(detail.invoice.status).toBe('sent');
+    });
+
+    test('resend rejects 409 wrong_status on a draft invoice', async ({ request }) => {
+      const headers = await csrfHeaders(request);
+      // Create a fresh draft on the same project (no source rows left, so empty draft is rejected).
+      // Instead, target the existing sent invoice's twin status: draft check via a brand-new draft.
+      // We'll test via a clearly-wrong scenario: void this invoice would change status, so use a
+      // dedicated check: create a new draft *without* contact_email blocking, by adding a one-off
+      // time entry first.
+      const tRes = await request.post('/api/time-entries', {
+        headers,
+        data: {
+          project_id: projectId,
+          entry_date: todayIso(),
+          hours: 1,
+          description: 'Resend wrong-status check',
+          act_as_user_id: subId,
+        },
+      });
+      expect(tRes.status()).toBe(201);
+
+      const issue = todayIso();
+      const cRes = await request.post('/api/invoices', {
+        headers,
+        data: {
+          project_id: projectId,
+          through_date: issue,
+          issue_date: issue,
+          due_date: plusDays(issue, 14),
+        },
+      });
+      expect(cRes.status()).toBe(201);
+      const { invoice: draft } = await cRes.json();
+
+      const r = await request.post(`/api/invoices/${draft.id}/resend-email`, { headers });
+      expect(r.status()).toBe(409);
+      const body = await r.json();
+      expect(body.error).toBe('wrong_status');
+
+      // Clean up the throwaway draft so the rest of the suite isn't affected.
+      const del = await request.delete(`/api/invoices/${draft.id}`, { headers });
+      expect(del.status()).toBe(204);
     });
   });
 

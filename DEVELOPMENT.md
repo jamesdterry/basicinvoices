@@ -218,7 +218,7 @@ Each stage is independently shippable. After each stage: deploy to fly, smoke `/
 Routes: full CRUD + `POST /api/invoices/:id/send`, `…/void`, `…/rotate-token`, `GET /api/invoices/:id/preview`. `routes/publicInvoice.js`: `GET /i/:token` server-renders the HTML invoice; rate-limited; `Cache-Control: private, no-store`, `X-Robots-Tag: noindex`; 410 on revoked token; **does not consult the session cookie**. Views: `invoices.js` (filter by status/client/date), `invoiceDetail.js` (preview pane, line editor for drafts).
 **Tests.** Snapshot test — change `project_members.bill_rate_cents` after invoice creation, verify `invoice_lines.unit_rate_cents` unchanged. Locking — pulled time entry rejects 409 on edit. Number scheme — year rollover, gap-free. E2E: super-admin creates project, sub logs hours, super-admin previews + creates draft, opens public link in fresh browser context.
 
-### Stage 6 — PDF + email
+### Stage 6 — DONE PDF + email
 **Scope.** `services/invoicePdf.js` — launch one Puppeteer browser at boot; `renderInvoicePdf(invoiceId) → Buffer` reuses `previewHtml`; close on SIGTERM. `services/invoiceMail.js` — HTML body + PDF attachment + public link; falls back to stdout in dev. `invoices.send()` calls `invoiceMail.send()`. `GET /i/:token.pdf` renders on demand with a small in-memory LRU keyed by `invoice.updated_at`. "Resend email" action on invoice detail.
 **Tests.** PDF buffer starts with `%PDF-`; dev-mode logs structured `dev-email` line including the public link. E2E: send invoice, intercept dev-email log, fetch `.pdf` URL, assert non-empty PDF.
 

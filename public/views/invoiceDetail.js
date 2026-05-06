@@ -236,6 +236,15 @@ export async function invoiceDetail({ id }, mount) {
     );
   }
 
+  let lastEmailNote = '';
+
+  function emailNote(email) {
+    if (!email) return '';
+    if (email.ok) return email.dev ? 'Logged (dev mode)' : 'Sent';
+    if (email.reason === 'no_client_email') return 'Skipped — client has no email on file';
+    return `Email failed (${email.reason || 'unknown'})`;
+  }
+
   function actionsRow() {
     const buttons = [];
     const link = publicLink(invoice.public_token);
@@ -245,7 +254,12 @@ export async function invoiceDetail({ id }, mount) {
         class: 'btn',
         onclick: async () => {
           if (!window.confirm(`Send invoice ${invoice.number}?`)) return;
-          await postJson(`/api/invoices/${numId}/send`, {});
+          try {
+            const { email } = await postJson(`/api/invoices/${numId}/send`, {});
+            lastEmailNote = emailNote(email);
+          } catch (err) {
+            lastEmailNote = `Send failed (${err?.body?.error || err.message || 'error'})`;
+          }
           await refresh();
           render();
         },
@@ -258,6 +272,23 @@ export async function invoiceDetail({ id }, mount) {
           window.location.hash = '#/invoices';
         },
       }, 'Delete draft'));
+    }
+
+    if (invoice.status === 'sent' || invoice.status === 'paid') {
+      buttons.push(h('button', {
+        class: 'btn secondary',
+        onclick: async () => {
+          if (!window.confirm(`Resend email for invoice ${invoice.number}?`)) return;
+          try {
+            const { email } = await postJson(`/api/invoices/${numId}/resend-email`, {});
+            lastEmailNote = emailNote(email);
+          } catch (err) {
+            lastEmailNote = `Resend failed (${err?.body?.error || err.message || 'error'})`;
+          }
+          await refresh();
+          render();
+        },
+      }, 'Resend email'));
     }
 
     if (invoice.status !== 'void') {
@@ -308,6 +339,7 @@ export async function invoiceDetail({ id }, mount) {
           : null,
       ),
       h('div', { class: 'row' }, ...buttons),
+      lastEmailNote ? h('p', { class: 'muted' }, lastEmailNote) : null,
     );
   }
 

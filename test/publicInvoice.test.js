@@ -126,6 +126,38 @@ describe('GET /i/:token', () => {
     expect(res.status).toBe(404);
   });
 
+  it('GET /:token.pdf returns 503 when the PDF renderer is disabled (vitest default)', async () => {
+    const userId = insertUser(db, 'a@example.com', 'A', 'super_admin');
+    const clientId = insertClient(db, 'Acme');
+    const projectId = insertProject(db, clientId, 'Website');
+    const inv = insertInvoice(db, { clientId, projectId, createdBy: userId });
+
+    const res = await request(app).get(`/i/${inv.token}.pdf`);
+    expect(res.status).toBe(503);
+    expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(res.headers['x-robots-tag']).toBe('noindex');
+  });
+
+  it('GET /:token.pdf returns 410 for a revoked token even when PDF disabled', async () => {
+    const userId = insertUser(db, 'a@example.com', 'A', 'super_admin');
+    const clientId = insertClient(db, 'Acme');
+    const projectId = insertProject(db, clientId, 'Website');
+    const inv = insertInvoice(db, {
+      clientId,
+      projectId,
+      createdBy: userId,
+      revokedAt: new Date().toISOString(),
+    });
+
+    const res = await request(app).get(`/i/${inv.token}.pdf`);
+    expect(res.status).toBe(410);
+  });
+
+  it('GET /:token.pdf returns 404 for an unknown token', async () => {
+    const res = await request(app).get('/i/bogusbogusbogusbogusbogusbogusbo.pdf');
+    expect(res.status).toBe(404);
+  });
+
   it('rate-limits after capacity is exhausted', async () => {
     const userId = insertUser(db, 'a@example.com', 'A', 'super_admin');
     const clientId = insertClient(db, 'Acme');

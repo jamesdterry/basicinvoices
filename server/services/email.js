@@ -27,10 +27,23 @@ function appendE2eLog(payload) {
   }
 }
 
-export async function sendEmail({ to, subject, text, html, link }) {
+export async function sendEmail({ to, subject, text, html, link, attachments }) {
   const t = getTransport();
   if (!t) {
-    const payload = { event: 'dev-email', to, subject, link, text };
+    const payload = {
+      event: 'dev-email',
+      to,
+      subject,
+      link,
+      text,
+      attachments: Array.isArray(attachments)
+        ? attachments.map((a) => ({
+            filename: a.filename,
+            bytes: a.content?.length ?? 0,
+            contentType: a.contentType,
+          }))
+        : undefined,
+    };
     logger.info(payload, 'dev-email');
     appendE2eLog(payload);
     return { dev: true };
@@ -41,5 +54,6 @@ export async function sendEmail({ to, subject, text, html, link }) {
     subject,
     text,
     html,
+    attachments,
   });
 }

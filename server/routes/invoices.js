@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { db } from '../db/connection.js';
+import { logger } from '../logger.js';
 import { requireUser } from '../middleware/requireUser.js';
 import { requireSuperAdmin } from '../middleware/requireSuperAdmin.js';
 import { clientIp } from '../middleware/rateLimit.js';
 import * as invoices from '../services/invoices.js';
+import * as invoiceMail from '../services/invoiceMail.js';
 import { renderInvoiceHtml } from '../views/invoice.html.js';
 
 export const invoicesRouter = Router();
@@ -23,6 +25,7 @@ function statusFor(reason) {
       return 404;
     case 'wrong_status':
     case 'locked':
+    case 'no_client_email':
       return 409;
     default:
       return 400;
@@ -83,11 +86,32 @@ invoicesRouter.delete('/:id', (req, res) => {
   res.status(204).end();
 });
 
-invoicesRouter.post('/:id/send', (req, res) => {
+invoicesRouter.post('/:id/send', async (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
   const r = invoices.send(db, id, { actor: req.user, ip: clientIp(req) });
   if (!r.ok) return res.status(statusFor(r.reason)).json({ error: r.reason });
-  res.json({ invoice: r.invoice });
+  let email;
+  try {
+    email = await invoiceMail.sendInvoiceEmail(db, id);
+  } catch (err) {
+    logger.error({ err, invoiceId: id }, 'invoice email dispatch threw');
+    email = { ok: false, reason: 'send_failed' };
+  }
+  res.json({ invoice: r.invoice, email });
+});
+
+invoicesRouter.post('/:id/resend-email', async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const r = invoices.resendEmail(db, id, { actor: req.user, ip: clientIp(req) });
+  if (!r.ok) return res.status(statusFor(r.reason)).json({ error: r.reason });
+  let email;
+  try {
+    email = await invoiceMail.sendInvoiceEmail(db, id);
+  } catch (err) {
+    logger.error({ err, invoiceId: id }, 'invoice email dispatch threw');
+    email = { ok: false, reason: 'send_failed' };
+  }
+  res.json({ invoice: r.invoice, email });
 });
 
 invoicesRouter.post('/:id/void', (req, res) => {

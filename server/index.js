@@ -20,6 +20,7 @@ import { usersRouter } from './routes/users.js';
 import { csrf } from './middleware/csrf.js';
 import { loadSessionFromCookie, gateAppShell } from './middleware/requireUser.js';
 import { startPruneErrorsTimer } from './timers/pruneErrors.js';
+import { shutdownPdfRenderer } from './services/invoicePdf.js';
 
 runMigrations(db, { log: (m) => logger.info({ migrate: m }, 'migration applied') });
 
@@ -99,7 +100,10 @@ if (isMain) {
 
   const shutdown = (signal) => {
     logger.info({ signal }, 'shutting down');
-    server.close(() => {
+    server.close(async () => {
+      try {
+        await shutdownPdfRenderer();
+      } catch {}
       try {
         db.close();
       } catch {}
