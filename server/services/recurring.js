@@ -26,6 +26,7 @@ import { logger } from '../logger.js';
 import { config } from '../config.js';
 import { logAction } from './audit.js';
 import * as invoices from './invoices.js';
+import * as invoiceMail from './invoiceMail.js';
 import * as milestones from './milestones.js';
 import * as stripeLinks from './stripeLinks.js';
 
@@ -129,6 +130,7 @@ function rowToSchedule(row) {
     fixed_amount_cents: row.fixed_amount_cents,
     fixed_description: row.fixed_description,
     auto_stripe_link: row.auto_stripe_link === 1,
+    auto_send: row.auto_send === 1,
     next_run_date: row.next_run_date,
     last_run_date: row.last_run_date,
     last_invoice_id: row.last_invoice_id,
@@ -199,9 +201,24 @@ function validateSetInput(input) {
       ? 1
       : 0;
 
+  const autoSend =
+    input?.auto_send === true ||
+    input?.auto_send === 1 ||
+    input?.autoSend === true ||
+    input?.autoSend === 1
+      ? 1
+      : 0;
+
   return {
     ok: true,
-    parsed: { mode, dayOfMonth, fixedAmountCents, fixedDescription, autoStripeLink },
+    parsed: {
+      mode,
+      dayOfMonth,
+      fixedAmountCents,
+      fixedDescription,
+      autoStripeLink,
+      autoSend,
+    },
   };
 }
 
@@ -220,7 +237,14 @@ export function setSchedule(db, projectId, input, { actor, ip } = {}) {
 
   const v = validateSetInput(input);
   if (!v.ok) return v;
-  const { mode, dayOfMonth, fixedAmountCents, fixedDescription, autoStripeLink } = v.parsed;
+  const {
+    mode,
+    dayOfMonth,
+    fixedAmountCents,
+    fixedDescription,
+    autoStripeLink,
+    autoSend,
+  } = v.parsed;
 
   const existing = getRawByProjectId(db, pid);
   const at = nowIso();
@@ -230,9 +254,9 @@ export function setSchedule(db, projectId, input, { actor, ip } = {}) {
     db.prepare(
       `INSERT INTO recurring_schedules
          (project_id, mode, cadence, day_of_month, fixed_amount_cents,
-          fixed_description, auto_stripe_link, next_run_date,
+          fixed_description, auto_stripe_link, auto_send, next_run_date,
           created_at, updated_at)
-       VALUES (?, ?, 'monthly', ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, 'monthly', ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       pid,
       mode,
@@ -240,6 +264,7 @@ export function setSchedule(db, projectId, input, { actor, ip } = {}) {
       fixedAmountCents,
       fixedDescription,
       autoStripeLink,
+      autoSend,
       nextRun,
       at,
       at
@@ -292,6 +317,13 @@ export function setSchedule(db, projectId, input, { actor, ip } = {}) {
       newValue: autoStripeLink,
     });
   }
+  if (existing.auto_send !== autoSend) {
+    changes.push({
+      field: 'auto_send',
+      oldValue: existing.auto_send,
+      newValue: autoSend,
+    });
+  }
 
   const nextRunDate =
     existing.day_of_month === dayOfMonth
@@ -312,8 +344,8 @@ export function setSchedule(db, projectId, input, { actor, ip } = {}) {
   db.prepare(
     `UPDATE recurring_schedules
         SET mode = ?, day_of_month = ?, fixed_amount_cents = ?,
-            fixed_description = ?, auto_stripe_link = ?, next_run_date = ?,
-            updated_at = ?
+            fixed_description = ?, auto_stripe_link = ?, auto_send = ?,
+            next_run_date = ?, updated_at = ?
       WHERE project_id = ?`
   ).run(
     mode,
@@ -321,6 +353,7 @@ export function setSchedule(db, projectId, input, { actor, ip } = {}) {
     fixedAmountCents,
     fixedDescription,
     autoStripeLink,
+    autoSend,
     nextRunDate,
     at,
     pid
@@ -625,12 +658,88 @@ async function runOne(db, schedule, { actor, ip, now }) {
     }
   }
 
-  // Audit the run (success / skipped / partial).
+  // Stage 8.6 — opt-in auto-send. Runs AFTER the Stripe-link block so the
+  // outgoing email body picks up the freshly-minted Payment Link URL. Even
+  // if Stripe failed (outcome === 'partial'), we still try to send — the
+  // manual flow has always worked without a Stripe link, and the email
+  // remains useful. Send failures (no_client_email, SMTP error, etc.) are
+  // caught and surfaced via audit meta.send + meta.status = 'partial';
+  // the draft persists for the operator to recover manually.
+  let sendStatus = null;
+  if (outcome !== 'error' && schedule.auto_send === 1 && invoiceId != null) {
+    try {
+      const sr = invoices.send(db, invoiceId, { actor, ip });
+      if (sr.ok) {
+        // invoices.send() flips status to 'sent' but doesn't dispatch the
+        // email — the route layer normally calls invoiceMail.sendInvoiceEmail
+        // afterwards (see routes/invoices.js POST /:id/send). Mirror that
+        // here so a recurring auto-send actually delivers.
+        try {
+          const mr = await invoiceMail.sendInvoiceEmail(db, invoiceId);
+          sendStatus = mr?.ok ? 'success' : (mr?.reason || 'send_failed');
+          if (!mr?.ok) {
+            outcome = 'partial';
+            logErrorRow(db, {
+              message: `recurring auto-send: invoice mail dispatch failed (${sendStatus})`,
+              route: 'recurring.runOne',
+              userId: actor.id,
+              meta: { schedule_id: schedule.id, invoice_id: invoiceId, step: 'mail' },
+            });
+          }
+        } catch (mailErr) {
+          logger.error({ err: mailErr, invoiceId }, 'recurring auto-send mail threw');
+          logErrorRow(db, {
+            message: `recurring auto-send mail threw: ${mailErr?.message || mailErr}`,
+            stack: mailErr?.stack,
+            route: 'recurring.runOne',
+            userId: actor.id,
+            meta: { schedule_id: schedule.id, invoice_id: invoiceId, step: 'mail' },
+          });
+          sendStatus = 'failure';
+          outcome = 'partial';
+        }
+      } else {
+        // invoices.send() rejected (e.g. no_client_email). Surface the
+        // reason; the draft remains in 'draft' for the operator.
+        sendStatus = sr.reason || 'send_failed';
+        outcome = 'partial';
+        logErrorRow(db, {
+          message: `recurring auto-send rejected: ${sendStatus}`,
+          route: 'recurring.runOne',
+          userId: actor.id,
+          meta: { schedule_id: schedule.id, invoice_id: invoiceId, step: 'send' },
+        });
+      }
+    } catch (err) {
+      logger.error({ err, invoiceId }, 'recurring auto-send threw');
+      logErrorRow(db, {
+        message: `recurring auto-send threw: ${err?.message || err}`,
+        stack: err?.stack,
+        route: 'recurring.runOne',
+        userId: actor.id,
+        meta: { schedule_id: schedule.id, invoice_id: invoiceId, step: 'send' },
+      });
+      sendStatus = 'failure';
+      outcome = 'partial';
+    }
+  }
+
+  // Audit the run (success / skipped / partial). Summary text adapts to
+  // whether auto-send fired and whether anything failed.
   let summary;
   if (outcome === 'skipped') {
     summary = `Recurring tick skipped (no unbilled rows) for ${project.client_name} — ${project.project_name}`;
   } else if (outcome === 'partial') {
-    summary = `Recurring tick drafted invoice ${invoiceNumber} for ${project.client_name} — ${project.project_name} (Stripe link generation failed)`;
+    const failedBits = [];
+    if (stripeStatus && stripeStatus !== 'success') failedBits.push('Stripe link');
+    if (sendStatus && sendStatus !== 'success') failedBits.push(`auto-send: ${sendStatus}`);
+    const failTrail = failedBits.length ? ` (${failedBits.join(', ')} failed)` : '';
+    summary = `Recurring tick drafted invoice ${invoiceNumber} for ${project.client_name} — ${project.project_name}${failTrail}`;
+  } else if (sendStatus === 'success') {
+    summary = `Recurring tick sent invoice ${invoiceNumber} to ${project.client_name} — ${project.project_name}`;
+    if (schedule.mode === 'fixed_milestone') {
+      summary += ` (${formatMoney(schedule.fixed_amount_cents)} retainer)`;
+    }
   } else {
     summary = `Recurring tick drafted invoice ${invoiceNumber} for ${project.client_name} — ${project.project_name}`;
     if (schedule.mode === 'fixed_milestone') {
@@ -651,6 +760,7 @@ async function runOne(db, schedule, { actor, ip, now }) {
       mode: schedule.mode,
       invoice_id: invoiceId,
       stripe: stripeStatus,
+      send: sendStatus,
     },
   });
 
@@ -660,6 +770,7 @@ async function runOne(db, schedule, { actor, ip, now }) {
     status: outcome,
     invoice_id: invoiceId,
     stripe: stripeStatus,
+    send: sendStatus,
   };
 }
 

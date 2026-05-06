@@ -128,6 +128,73 @@ test.describe.serial('recurring billing', () => {
     });
   });
 
+  test.describe('auto-send (Stage 8.6)', () => {
+    test.use({ storageState: '.auth/super_admin.json' });
+
+    let autoSendProjectId;
+
+    test('configure a second project with auto_send enabled', async ({ request }) => {
+      const headers = await csrfHeaders(request);
+
+      // New client + project so we don't disturb the auto_send=false fixture above.
+      const cRes = await request.post('/api/clients', {
+        headers,
+        data: {
+          name: 'Auto-Send E2E Client',
+          payment_terms_days: 14,
+          contact_email: 'billing@auto-send-e2e.test',
+        },
+      });
+      expect(cRes.status()).toBe(201);
+      const { client } = await cRes.json();
+
+      const pRes = await request.post('/api/projects', {
+        headers,
+        data: { client_id: client.id, name: 'Auto-Send E2E Project' },
+      });
+      expect(pRes.status()).toBe(201);
+      autoSendProjectId = (await pRes.json()).project.id;
+
+      const rRes = await request.put(
+        `/api/projects/${autoSendProjectId}/recurring`,
+        {
+          headers,
+          data: {
+            mode: 'fixed_milestone',
+            day_of_month: 1,
+            fixed_amount_cents: 25000,
+            fixed_description: 'Monthly retainer (auto-send)',
+            auto_send: true,
+            auto_stripe_link: false,
+          },
+        }
+      );
+      expect(rRes.status()).toBe(200);
+      const { schedule } = await rRes.json();
+      expect(schedule.auto_send).toBe(true);
+    });
+
+    test('run-now drafts AND sends — invoice ends up in sent status', async ({ request }) => {
+      const headers = await csrfHeaders(request);
+      const r = await request.post(
+        `/api/projects/${autoSendProjectId}/recurring/run-now`,
+        { headers, data: {} }
+      );
+      expect(r.status()).toBe(200);
+      const body = await r.json();
+      expect(body.result.status).toBe('success');
+      expect(body.result.send).toBe('success');
+      expect(body.result.invoice_id).toBeGreaterThan(0);
+
+      // Confirm the invoice flipped to 'sent' (not still 'draft').
+      const inv = await request.get(`/api/invoices/${body.result.invoice_id}`);
+      expect(inv.status()).toBe(200);
+      const invBody = await inv.json();
+      expect(invBody.invoice.status).toBe('sent');
+      expect(invBody.invoice.sent_at).toBeTruthy();
+    });
+  });
+
   test.describe('sub cannot touch recurring', () => {
     test.use({ storageState: '.auth/subcontractor.json' });
 

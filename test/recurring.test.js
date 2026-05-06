@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // in test/stripeLinks.test.js. We need to control superAdminEmail (so
 // runDue() resolves the actor) and stripeSecretKey (so the auto-link path
 // hits the mocked Stripe client).
-const { mockConfig, paymentLinksCreate, paymentLinksUpdate } = vi.hoisted(() => ({
+const { mockConfig, paymentLinksCreate, paymentLinksUpdate, sendInvoiceEmail } = vi.hoisted(() => ({
   mockConfig: {
     isTest: true,
     isProd: false,
@@ -22,6 +22,7 @@ const { mockConfig, paymentLinksCreate, paymentLinksUpdate } = vi.hoisted(() => 
   },
   paymentLinksCreate: vi.fn(),
   paymentLinksUpdate: vi.fn(),
+  sendInvoiceEmail: vi.fn(),
 }));
 
 vi.mock('../server/config.js', () => ({ config: mockConfig }));
@@ -32,6 +33,11 @@ vi.mock('stripe', () => ({
     }
     paymentLinks = { create: paymentLinksCreate, update: paymentLinksUpdate };
   },
+}));
+// Mock invoiceMail so auto_send tests don't try to launch puppeteer / spin
+// up an SMTP transport. The real path is covered in test/invoiceMail.test.js.
+vi.mock('../server/services/invoiceMail.js', () => ({
+  sendInvoiceEmail,
 }));
 
 import { makeTestDb } from './db.js';
@@ -83,6 +89,8 @@ beforeEach(() => {
     url: 'https://buy.stripe.com/test_default',
   });
   paymentLinksUpdate.mockResolvedValue({});
+  sendInvoiceEmail.mockReset();
+  sendInvoiceEmail.mockResolvedValue({ ok: true, dev: true, attachment: true });
   stripeLinks._resetClient();
 
   db = makeTestDb();
@@ -507,6 +515,149 @@ describe('runDue — auto_stripe_link', () => {
       "SELECT * FROM error_log WHERE message LIKE 'stripe paymentLinks.create failed%'"
     ).get();
     expect(errRow).toBeTruthy();
+  });
+});
+
+describe('runDue — auto_send', () => {
+  beforeEach(() => {
+    createTimeEntry(
+      db,
+      { project_id: project.id, entry_date: '2026-05-04', hours: 2, description: 'x' },
+      { actor: sub }
+    );
+  });
+
+  function makeAutoSendSchedule({ autoStripe = false } = {}) {
+    setSchedule(
+      db,
+      project.id,
+      {
+        mode: 'time_and_expenses',
+        day_of_month: 6,
+        auto_send: true,
+        auto_stripe_link: autoStripe,
+      },
+      { actor: admin }
+    );
+    db.prepare('UPDATE recurring_schedules SET next_run_date = ? WHERE project_id = ?')
+      .run('2026-05-06', project.id);
+  }
+
+  it('with valid contact_email, invoice flips to sent + meta.send=success', async () => {
+    makeAutoSendSchedule();
+    const results = await runDue(db, { now: new Date('2026-05-06T12:00:00Z') });
+    expect(results[0].status).toBe('success');
+    expect(results[0].send).toBe('success');
+
+    const inv = db.prepare('SELECT status, sent_at FROM invoices WHERE id = ?').get(results[0].invoice_id);
+    expect(inv.status).toBe('sent');
+    expect(inv.sent_at).not.toBeNull();
+
+    // sendInvoiceEmail mock was actually called
+    expect(sendInvoiceEmail).toHaveBeenCalledTimes(1);
+    expect(sendInvoiceEmail).toHaveBeenCalledWith(expect.anything(), results[0].invoice_id);
+
+    // Audit captures send=success
+    const audit = db.prepare(
+      "SELECT * FROM admin_audit WHERE action = 'recurring.run' ORDER BY id DESC LIMIT 1"
+    ).get();
+    const meta = JSON.parse(audit.meta_json);
+    expect(meta.send).toBe('success');
+    expect(meta.status).toBe('success');
+    expect(audit.summary).toContain('sent invoice');
+  });
+
+  it('with null contact_email, invoice stays draft + meta.send=no_client_email', async () => {
+    // Strip the client's contact_email
+    db.prepare('UPDATE clients SET contact_email = NULL WHERE id = ?').run(project.client_id);
+    makeAutoSendSchedule();
+
+    const results = await runDue(db, { now: new Date('2026-05-06T12:00:00Z') });
+    expect(results[0].status).toBe('partial');
+    expect(results[0].send).toBe('no_client_email');
+
+    const inv = db.prepare('SELECT status, sent_at FROM invoices WHERE id = ?').get(results[0].invoice_id);
+    expect(inv.status).toBe('draft');
+    expect(inv.sent_at).toBeNull();
+
+    // The mail dispatch was NOT called (invoices.send rejected first)
+    expect(sendInvoiceEmail).not.toHaveBeenCalled();
+
+    // error_log row written
+    const errRow = db.prepare(
+      "SELECT * FROM error_log WHERE message LIKE 'recurring auto-send rejected%'"
+    ).get();
+    expect(errRow).toBeTruthy();
+    expect(errRow.message).toContain('no_client_email');
+  });
+
+  it('with email dispatch throwing, invoice is sent but audit is partial + error logged', async () => {
+    sendInvoiceEmail.mockRejectedValueOnce(new Error('SMTP down'));
+    makeAutoSendSchedule();
+
+    const results = await runDue(db, { now: new Date('2026-05-06T12:00:00Z') });
+    expect(results[0].status).toBe('partial');
+    expect(results[0].send).toBe('failure');
+
+    // invoices.send already flipped status before the mail dispatch threw —
+    // matches the route-level behavior (no rollback on SMTP failure).
+    const inv = db.prepare('SELECT status FROM invoices WHERE id = ?').get(results[0].invoice_id);
+    expect(inv.status).toBe('sent');
+
+    const errRow = db.prepare(
+      "SELECT * FROM error_log WHERE message LIKE 'recurring auto-send mail threw%'"
+    ).get();
+    expect(errRow).toBeTruthy();
+  });
+
+  it('with email dispatch returning ok:false, invoice is sent but audit is partial', async () => {
+    sendInvoiceEmail.mockResolvedValueOnce({ ok: false, reason: 'send_failed' });
+    makeAutoSendSchedule();
+
+    const results = await runDue(db, { now: new Date('2026-05-06T12:00:00Z') });
+    expect(results[0].status).toBe('partial');
+    expect(results[0].send).toBe('send_failed');
+  });
+
+  it('combined with auto_stripe_link, both succeed and link is generated before send', async () => {
+    mockConfig.stripeSecretKey = 'sk_test_unit';
+    stripeLinks._resetClient();
+    paymentLinksCreate.mockResolvedValueOnce({
+      id: 'plink_combined',
+      url: 'https://buy.stripe.com/combined',
+    });
+    makeAutoSendSchedule({ autoStripe: true });
+
+    const results = await runDue(db, { now: new Date('2026-05-06T12:00:00Z') });
+    expect(results[0].status).toBe('success');
+    expect(results[0].stripe).toBe('success');
+    expect(results[0].send).toBe('success');
+
+    // Stripe was called BEFORE the email dispatch
+    const stripeOrder = paymentLinksCreate.mock.invocationCallOrder[0];
+    const sendOrder = sendInvoiceEmail.mock.invocationCallOrder[0];
+    expect(stripeOrder).toBeLessThan(sendOrder);
+
+    // Invoice has both the URL and 'sent' status
+    const inv = db.prepare(
+      'SELECT status, stripe_payment_link_url FROM invoices WHERE id = ?'
+    ).get(results[0].invoice_id);
+    expect(inv.status).toBe('sent');
+    expect(inv.stripe_payment_link_url).toBe('https://buy.stripe.com/combined');
+  });
+
+  it('auto_send=0 (default) preserves existing draft-only behavior', async () => {
+    setSchedule(db, project.id, { mode: 'time_and_expenses', day_of_month: 6 }, { actor: admin });
+    db.prepare('UPDATE recurring_schedules SET next_run_date = ? WHERE project_id = ?')
+      .run('2026-05-06', project.id);
+
+    const results = await runDue(db, { now: new Date('2026-05-06T12:00:00Z') });
+    expect(results[0].status).toBe('success');
+    expect(results[0].send).toBeNull();
+
+    const inv = db.prepare('SELECT status FROM invoices WHERE id = ?').get(results[0].invoice_id);
+    expect(inv.status).toBe('draft');
+    expect(sendInvoiceEmail).not.toHaveBeenCalled();
   });
 });
 

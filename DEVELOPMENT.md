@@ -268,6 +268,63 @@ Wraps Stripe's Payment Links API behind a service so the operator can mint a lin
 **Tests.** With frozen `now`, three schedules with various `next_run_date`s: only due ones run; failed row doesn't block others; advance honors `day_of_month` clamp. With `auto_stripe_link=1` + a mocked Stripe client, the generated draft has `stripe_payment_link_url` populated; with the same flag but `!isEnabled()`, the draft drops without a URL and recurring doesn't error. E2E: super-admin sets up a fixed retainer, "run now", a draft appears.
 **Verification.** Drafts (never sent) appear; super-admin reviews and sends manually. Confirm `min_machines_running=1` in prod.
 
+### Stage 8.5 — DONE Production triggers (wake-on-activity + TOTP cron)
+
+With fly running `auto_stop_machines = "stop"` and `min_machines_running = 0`, the in-process recurring timer can't be relied on to fire. This stage wires three convergent triggers that all flow through `services/recurring.js#maybeRunDue`'s atomic `_recurring_meta` claim so concurrent fires can't double-process schedules:
+
+- **In-process timer** — legacy; harmless redundancy while the machine happens to be up for other reasons.
+- **Wake-on-activity** — `routes/me.js` fires `setImmediate(() => maybeRunDue(db))` after the response so the consultant's app-shell load drives the tick. The 1-hour `_recurring_meta` interval throttles repeat fires.
+- **TOTP-gated cron** — `POST /cron/recurring-tick` (mounted before `csrf`, parallel to `/i/`). Authenticated by a 30-second TOTP code (RFC 6238, HMAC-SHA1, ±1 step skew) computed from `RECURRING_TICK_SECRET`. Daily fire from `.github/workflows/recurring-tick.yml` at 13:00 UTC. The HTTP request itself wakes a stopped fly machine via `auto_start_machines = true`; rate-limited 6 req/min/IP.
+
+`_recurring_meta` is a single-row table that holds the last tick timestamp; `tryClaimTick` does an atomic `UPDATE WHERE last_tick_at < cutoff`. Only the first writer in a window wins; concurrent triggers either succeed or no-op cleanly. Schedules become due at midnight UTC and stay due all day, so a "skip because someone else just ran" is always safe.
+
+Migration `0010_recurring_meta.sql`. New: `server/lib/totp.js`, `server/routes/cron.js`, `scripts/totp-code.js`, `.github/workflows/recurring-tick.yml`. `fly.toml` dropped `min_machines_running` to 0.
+
+### Stage 8.6 — Auto-send recurring drafts
+
+Adds an opt-in `auto_send` flag on `recurring_schedules` so a recurring tick can both **generate and send** an invoice without super-admin review. Pairs with `auto_stripe_link` — when both are on, the auto-generated Stripe Payment Link rides along in the auto-sent email body just like a manually-sent invoice.
+
+This is consequential: once sent, an invoice can't be unsent; rate or hour mistakes go out the door without review. The flag defaults to `0` and the UI surfaces it with a warning.
+
+**Scope.**
+- Migration `0011_recurring_auto_send.sql` — `ALTER TABLE recurring_schedules ADD COLUMN auto_send INTEGER NOT NULL DEFAULT 0 CHECK (auto_send IN (0, 1))`. Additive; no table rebuild.
+- `services/recurring.js`:
+  - `validateSetInput` parses `auto_send` (boolean / 0|1) using the same coercion as `auto_stripe_link`.
+  - `setSchedule` persists it + emits an `auto_send` `changes` entry when toggled.
+  - `rowToSchedule` exposes `auto_send: boolean` to the SPA.
+  - `runOne` gains a third post-transaction step **after** the existing `auto_stripe_link` branch (so the email body sees the Payment Link URL) and **before** the `recurring.run` audit. When `schedule.auto_send === 1 && invoiceId != null && outcome !== 'error'`, fire `invoices.send(db, invoiceId, { actor, ip })`:
+    - `{ ok: true }` → keep `outcome` as-is; record `meta.send = 'success'`.
+    - `{ ok: false, reason: 'no_client_email' | … }` → flip `outcome` to `'partial'`, record `meta.send = <reason>`, write `error_log`.
+    - thrown error (SMTP failure) → flip to `'partial'`, log + `error_log`, record `meta.send = 'failure'`.
+  - Audit summary adapts: a fully-successful auto-send reads "Recurring tick sent invoice 2026-0007 to Acme — Website ($500.00 retainer)"; failures still mention drafting + which step failed.
+- `public/components/recurringForm.js` — new "Auto-send invoice on each run" checkbox below `auto_stripe_link`, with a one-line warning ("Skips the draft-review step — make sure rates and dates are correct before enabling"). No precondition check on `clients.contact_email` at form-save time; the runtime check inside `runOne` is the gate (operator can configure auto_send before adding the email; tick will surface the missing-email outcome via audit `'partial'`).
+- No new route reasons; `runOne` handles all auto_send failures internally and surfaces them via the audit row.
+
+**Failure-mode matrix** (status, audit-status):
+
+| stripe-link | auto-send | stripe outcome | send outcome | invoice status | audit `meta.status` |
+|---|---|---|---|---|---|
+| 0 | 0 | n/a | n/a | draft | success |
+| 1 | 0 | success | n/a | draft (with link) | success |
+| 1 | 0 | fail | n/a | draft (no link) | partial |
+| 0 | 1 | n/a | success | sent | success |
+| 0 | 1 | n/a | fail | draft | partial |
+| 1 | 1 | success | success | sent (with link) | success |
+| 1 | 1 | success | fail | draft (with link) | partial |
+| 1 | 1 | fail | success | sent (no link) | partial |
+| 1 | 1 | fail | fail | draft (no link) | partial |
+
+**Tests.** New `describe('runDue — auto_send', …)` in `test/recurring.test.js`:
+- `auto_send = 1` + non-null `contact_email` → invoice status `'sent'`, audit `meta.send = 'success'`.
+- `auto_send = 1` + null `contact_email` → invoice stays `'draft'`, audit `meta.send = 'no_client_email'`, `meta.status = 'partial'`.
+- `auto_send = 1` + email service throws → invoice stays `'draft'`, `error_log` row written.
+- `auto_send = 1` + `auto_stripe_link = 1` (both on) → `'sent'` status, `stripe_payment_link_url` set; verify the Stripe link path runs BEFORE `send` so the email sees the URL.
+- `auto_send = 0` (default) → existing behavior, invoice stays `'draft'`.
+
+E2E (`e2e/recurring.spec.js`): one new test that sets `auto_send: true` via PUT, calls run-now, asserts `invoice.status === 'sent'` and that the dev-email log captured the dispatch (mirrors the pattern in `e2e/payments.spec.js`).
+
+**Verification.** Configure auto_send on a fixed-milestone schedule, set the client's `contact_email`, click Run now: confirm the invoice is in `sent` status and the dev-email log records the dispatch. Then unset the contact email and run again: confirm the next draft stays `draft` with audit `meta.send = 'no_client_email'` and an `error_log` row.
+
 ### Stage 9 — Reports + CSV
 **Scope.** `services/reports.js` — `paymentsReport({ from, to, groupBy: 'client'|'project' })` returns `[{ key, label, totalCents, count }]` (USD only). Presets: this month, last month, this quarter, this year, last year, custom. Routes: `GET /api/reports/payments?...&format=json|csv` (CSV via small in-house writer). View: `reports.js` with preset chips, custom range picker, group-by toggle, table, "Export CSV".
 **Tests.** Aggregation correctness; date-range edge cases (use `issue_date` calendar day, be explicit about local vs UTC). E2E: generate sample data, run "this year by client" report, click CSV, verify download.

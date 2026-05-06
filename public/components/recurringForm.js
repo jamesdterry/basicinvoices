@@ -32,6 +32,7 @@ export function RecurringForm({
       : '';
   const fixedDescription = schedule?.fixed_description || '';
   const autoStripeLink = schedule?.auto_stripe_link === true;
+  const autoSend = schedule?.auto_send === true;
 
   const modeTimeRadio = h('input', {
     type: 'radio',
@@ -90,6 +91,22 @@ export function RecurringForm({
       : null
   );
 
+  const autoSendCheckbox = h('input', {
+    type: 'checkbox',
+    checked: autoSend,
+  });
+  const autoSendLabel = h(
+    'label',
+    { class: 'row' },
+    autoSendCheckbox,
+    h('span', {}, 'Auto-send invoice on each run')
+  );
+  const autoSendWarning = h(
+    'p',
+    { class: 'muted' },
+    'Skips the draft-review step — make sure the project rates and the client’s contact email are correct before enabling. Generated drafts go straight to the client without further confirmation.'
+  );
+
   function refreshModeVisibility() {
     const m = modeFixedRadio.checked ? 'fixed_milestone' : 'time_and_expenses';
     fixedFields.hidden = m !== 'fixed_milestone';
@@ -117,6 +134,7 @@ export function RecurringForm({
             mode: m,
             day_of_month: day,
             auto_stripe_link: autoStripeCheckbox.checked && stripeEnabled,
+            auto_send: autoSendCheckbox.checked,
           };
           if (m === 'fixed_milestone') {
             const cents = Math.round(Number(fixedAmountInput.value) * 100);
@@ -146,6 +164,7 @@ export function RecurringForm({
     h('div', { class: 'field' }, h('label', {}, 'Day of month (1–28) *'), dayInput),
     fixedFields,
     h('div', { class: 'field' }, autoStripeLabel),
+    h('div', { class: 'field' }, autoSendLabel, autoSendWarning),
     error,
     h('div', { class: 'row' }, submit)
   );
