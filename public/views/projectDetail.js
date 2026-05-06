@@ -1,10 +1,11 @@
 import { h, state } from '/lib/state.js';
-import { getJson, patchJson, postJson, deleteJson } from '/lib/api.js';
+import { getJson, patchJson, postJson, putJson, deleteJson } from '/lib/api.js';
 import { formatMoney } from '/lib/money.js';
 import { ProjectForm } from '/components/projectForm.js';
 import { MemberRow } from '/components/memberRow.js';
 import { ExpenseForm } from '/components/expenseForm.js';
 import { MilestoneForm } from '/components/milestoneForm.js';
+import { RecurringForm } from '/components/recurringForm.js';
 
 export async function projectDetail({ id }, mount) {
   mount.replaceChildren(h('main', { class: 'wide stack' }, h('p', { class: 'muted' }, 'Loading…')));
@@ -16,6 +17,7 @@ export async function projectDetail({ id }, mount) {
   let userPicks = [];
   let expenses = [];
   let milestones = [];
+  let recurringSchedule = null;
   try {
     ({ project } = await getJson(`/api/projects/${numId}`));
     ({ members } = await getJson(`/api/projects/${numId}/members`));
@@ -23,15 +25,21 @@ export async function projectDetail({ id }, mount) {
       ({ clients: clientList } = await getJson('/api/clients'));
       // Subs are the common case but the super-admin can also self-bill at a
       // per-project rate (AGENTS.md domain glossary), so include both roles.
-      const [subRes, adminRes, expRes, milRes] = await Promise.all([
+      const [subRes, adminRes, expRes, milRes, recRes] = await Promise.all([
         getJson('/api/users?role=subcontractor'),
         getJson('/api/users?role=super_admin'),
         getJson(`/api/expenses?project_id=${numId}&include_locked=1`),
         getJson(`/api/milestones?project_id=${numId}&include_locked=1`),
+        // 404 = "no schedule configured yet"; not an error.
+        getJson(`/api/projects/${numId}/recurring`).catch((err) => {
+          if (err?.status === 404) return { schedule: null };
+          throw err;
+        }),
       ]);
       userPicks = [...(subRes.users || []), ...(adminRes.users || [])];
       expenses = expRes.entries || [];
       milestones = milRes.entries || [];
+      recurringSchedule = recRes.schedule || null;
     }
   } catch (err) {
     mount.replaceChildren(h('main', { class: 'wide stack' },
@@ -55,6 +63,15 @@ export async function projectDetail({ id }, mount) {
   async function refreshExpenses() {
     const { entries } = await getJson(`/api/expenses?project_id=${numId}&include_locked=1`);
     expenses = entries || [];
+  }
+  async function refreshRecurring() {
+    try {
+      const { schedule } = await getJson(`/api/projects/${numId}/recurring`);
+      recurringSchedule = schedule || null;
+    } catch (err) {
+      if (err?.status === 404) recurringSchedule = null;
+      else throw err;
+    }
   }
   async function refreshMilestones() {
     const { entries } = await getJson(`/api/milestones?project_id=${numId}&include_locked=1`);
@@ -484,6 +501,50 @@ export async function projectDetail({ id }, mount) {
     );
   }
 
+  function recurringSection() {
+    const stripeEnabled = state.currentUser?.stripe_enabled === true;
+    return h(
+      'section',
+      { class: 'stack' },
+      h('h2', {}, 'Recurring schedule'),
+      RecurringForm({
+        schedule: recurringSchedule,
+        stripeEnabled,
+        onSave: async (payload) => {
+          const r = await putJson(`/api/projects/${numId}/recurring`, payload);
+          recurringSchedule = r.schedule;
+          render();
+        },
+        onPause: async () => {
+          const r = await postJson(`/api/projects/${numId}/recurring/pause`, {});
+          recurringSchedule = r.schedule;
+          render();
+        },
+        onResume: async () => {
+          const r = await postJson(`/api/projects/${numId}/recurring/resume`, {});
+          recurringSchedule = r.schedule;
+          render();
+        },
+        onRunNow: async () => {
+          const r = await postJson(`/api/projects/${numId}/recurring/run-now`, {});
+          recurringSchedule = r.schedule;
+          // The run also locks newly-pulled time/expense/milestone rows and
+          // may create a new milestone (fixed mode), so refresh those.
+          await Promise.all([refreshExpenses(), refreshMilestones()]);
+          render();
+          if (r.result?.invoice_id) {
+            window.location.hash = `#/invoices/${r.result.invoice_id}`;
+          }
+        },
+        onDelete: async () => {
+          await deleteJson(`/api/projects/${numId}/recurring`);
+          recurringSchedule = null;
+          render();
+        },
+      })
+    );
+  }
+
   function render() {
     const detail = editing
       ? ProjectForm({
@@ -549,6 +610,7 @@ export async function projectDetail({ id }, mount) {
         isAdmin ? expensesSection() : null,
         isAdmin ? milestonesSection() : null,
         isAdmin ? invoiceSection() : null,
+        isAdmin ? recurringSection() : null,
       ),
     );
   }

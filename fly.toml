@@ -15,16 +15,19 @@ primary_region = "ord"
   source = "data"
   destination = "/data"
 
-# min_machines_running = 1 is required so the in-process recurring-billing
-# timer (Stage 8) fires hourly. Deliberate departure from the playbook default
-# of 0; the cost for one consultant is negligible and removes "cron didn't
-# fire" failure modes.
+# Stage 8.5 — the in-process recurring tick is no longer the primary trigger.
+# A daily GitHub Action (.github/workflows/recurring-tick.yml) hits
+# /cron/recurring-tick with a TOTP code; the inbound HTTP request wakes the
+# machine via auto_start_machines. The wake-on-activity hook in routes/me.js
+# fires maybeRunDue when the consultant uses the app. Both paths self-gate
+# via the _recurring_meta atomic claim, so the leftover in-process timer is
+# harmless redundancy when the machine happens to be up.
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "off"
+  auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
   processes = ["app"]
 
   [[http_service.checks]]

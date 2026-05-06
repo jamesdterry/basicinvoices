@@ -230,7 +230,7 @@ Routes: full CRUD + `POST /api/invoices/:id/send`, `…/void`, `…/rotate-token
 **Scope.** Migration `0007_payments.sql`. `services/payments.js` — `create`, `update`, `delete`. After every mutation, recompute `invoices.amount_paid_cents` and flip status to `paid` when fully covered (no auto-revert from `paid` on partial refund — operator handles). Audit each payment. Add `stripe_payment_link_url` editing on draft + sent flows; invoice template gains "Pay online" button when set. Routes: `GET /api/invoices/:id/payments`, `POST …`, `PATCH /api/payments/:id`, `DELETE /api/payments/:id`. View: `paymentForm.js` modal off invoice detail; status badge updates via `state.js`.
 **Tests.** Partial leaves status `sent`; sum flips to `paid`; deleting recomputes correctly. E2E: two partial payments summing to total → status flips, audit entries exist.
 
-### Stage 7A — Programmatic Stripe Payment Links
+### Stage 7A — DONE Programmatic Stripe Payment Links
 Wraps Stripe's Payment Links API behind a service so the operator can mint a link from the invoice detail UI in one click and so Stage 8 recurring drafts can ship with a link already attached. Manual paste-the-URL stays supported for shops that never set a `STRIPE_SECRET_KEY`.
 
 **Scope.**
@@ -256,7 +256,7 @@ Wraps Stripe's Payment Links API behind a service so the operator can mint a lin
 3. Void the invoice; confirm in the Stripe dashboard that the Payment Link is no longer active.
 4. Click "Regenerate" on a sent invoice with an existing link; confirm the URL/id changes, audit row written with `changes`.
 
-### Stage 8 — Recurring billing
+### Stage 8 — DONE Recurring billing
 **Scope.** Migration `0009_recurring_schedules.sql` (renumbered post-7A). `services/recurring.js` — `setSchedule`, `pause`, `resume`, `runDue(now = new Date())`. The `runDue` actor is a synthetic system user (`{ id: null, role: 'super_admin' }`) so audit rows attribute correctly; `services/timeEntries.js` and friends accept `actorId == null` (admin_audit row stores NULL). For each row where `paused_at IS NULL AND next_run_date <= today`:
 - mode `time_and_expenses`: `invoices.createDraft(projectId, { throughDate: today })`.
 - mode `fixed_milestone`: insert a `milestones` row with `fixed_amount_cents` + `fixed_description`, then `invoices.createDraft(...)` so the milestone gets pulled in (single code path).

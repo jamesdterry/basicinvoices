@@ -18,9 +18,15 @@ import { invoicesRouter } from './routes/invoices.js';
 import { paymentsRouter } from './routes/payments.js';
 import { publicInvoiceRouter } from './routes/publicInvoice.js';
 import { usersRouter } from './routes/users.js';
+import { adminRouter } from './routes/admin.js';
+import { cronRouter } from './routes/cron.js';
 import { csrf } from './middleware/csrf.js';
 import { loadSessionFromCookie, gateAppShell } from './middleware/requireUser.js';
 import { startPruneErrorsTimer } from './timers/pruneErrors.js';
+import {
+  startRecurringTickTimer,
+  stopRecurringTickTimer,
+} from './timers/recurringTick.js';
 import { shutdownPdfRenderer } from './services/invoicePdf.js';
 
 runMigrations(db, { log: (m) => logger.info({ migrate: m }, 'migration applied') });
@@ -58,6 +64,10 @@ export function createApp() {
   // public link must work in browsers that have no relationship with the app.
   app.use('/i', publicInvoiceRouter);
 
+  // System endpoints mounted BEFORE csrf — TOTP-authenticated, no session
+  // cookie, and called by GitHub Actions / fly Scheduled Machines.
+  app.use('/cron', cronRouter);
+
   app.use(csrf);
   app.use(loadSessionFromCookie);
 
@@ -72,6 +82,7 @@ export function createApp() {
   app.use('/api/invoices', invoicesRouter);
   app.use('/api/payments', paymentsRouter);
   app.use('/api/users', usersRouter);
+  app.use('/api/admin', adminRouter);
 
   // App-shell gating: only / and /index.html require a session. Everything
   // else under public/ (login.html, /lib/*, /views/*, css) stays open.
@@ -92,7 +103,10 @@ export function createApp() {
 const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const app = createApp();
-  if (!config.isTest) startPruneErrorsTimer();
+  if (!config.isTest) {
+    startPruneErrorsTimer();
+    startRecurringTickTimer();
+  }
   const server = app.listen(config.port, () => {
     logger.info(
       { port: config.port, env: config.nodeEnv, dbPath: config.dbPath },
@@ -102,6 +116,7 @@ if (isMain) {
 
   const shutdown = (signal) => {
     logger.info({ signal }, 'shutting down');
+    stopRecurringTickTimer();
     server.close(async () => {
       try {
         await shutdownPdfRenderer();

@@ -18,6 +18,7 @@ export function Nav(user) {
   links.push(navLink('#/time-entries', user.role === 'super_admin' ? 'Time' : 'My hours', currentHash));
   if (user.role === 'super_admin') {
     links.push(navLink('#/invoices', 'Invoices', currentHash));
+    links.push(navLink('#/recurring', 'Recurring', currentHash));
   }
 
   return h('nav', { class: 'row' },

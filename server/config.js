@@ -56,5 +56,11 @@ export const config = Object.freeze({
   // the Generate-link route returns 503 'stripe_disabled'. Manual paste of
   // a Stripe Payment Link URL keeps working regardless.
   stripeSecretKey: env.STRIPE_SECRET_KEY || '',
+  // Stage 8.5 — TOTP secret (RFC 6238) for /cron/recurring-tick. When unset,
+  // the route returns 503 'tick_disabled' and only the in-process timer +
+  // wake-on-activity hook can fire the recurring tick. With min_machines_running = 0
+  // in fly.toml, an external trigger (GitHub Action) is needed; that path
+  // requires this secret. Generate with `openssl rand -hex 20`.
+  recurringTickSecret: env.RECURRING_TICK_SECRET || '',
   cookiePrefix: 'bi_',
 });

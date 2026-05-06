@@ -1,0 +1,64 @@
+name: Recurring tick
+
+# Hits POST /cron/recurring-tick on the deployed app, authenticated with a
+# 30-second TOTP code derived from RECURRING_TICK_SECRET (set in GitHub repo
+# secrets, also as a fly secret on the app). The HTTP request itself wakes
+# a stopped fly machine via auto_start_machines = true, runs the recurring
+# tick, then the machine sleeps again.
+#
+# Required repo secrets:
+#   RECURRING_TICK_SECRET — same value as the fly app's env var
+#   RECURRING_TICK_URL    — e.g. https://basicinvoices.fly.dev/cron/recurring-tick
+#
+# Manual trigger via the Actions tab is enabled (workflow_dispatch) for
+# ad-hoc runs.
+
+on:
+  schedule:
+    # 13:00 UTC daily ≈ 8am Central. Drafts due today drop before the
+    # consultant starts work. GitHub may delay scheduled jobs by 5–15 min
+    # under load — fine for a tool whose output the user reviews anyway.
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute TOTP code
+        id: totp
+        env:
+          RECURRING_TICK_SECRET: ${{ secrets.RECURRING_TICK_SECRET }}
+        run: |
+          if [ -z "$RECURRING_TICK_SECRET" ]; then
+            echo "::error::RECURRING_TICK_SECRET repo secret is not set"
+            exit 1
+          fi
+          CODE=$(node scripts/totp-code.js)
+          # Mask the code in logs (paranoia — codes rotate every 30s anyway).
+          echo "::add-mask::$CODE"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
+      - name: POST /cron/recurring-tick
+        env:
+          URL: ${{ secrets.RECURRING_TICK_URL }}
+          CODE: ${{ steps.totp.outputs.code }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "::error::RECURRING_TICK_URL repo secret is not set"
+            exit 1
+          fi
+          # --fail makes curl exit non-zero on HTTP 4xx/5xx.
+          # --max-time 60 is generous — the route runs runDue synchronously
+          # plus any best-effort Stripe link generation.
+          curl --fail --silent --show-error --max-time 60 \
+            -X POST \
+            -H "X-Recurring-Tick: $CODE" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            "$URL"
+          echo

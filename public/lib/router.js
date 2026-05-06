@@ -11,6 +11,7 @@ export const ROUTES = [
   { name: 'timeEntries', match: (parts) => (parts.length === 1 && parts[0] === 'time-entries' ? {} : null) },
   { name: 'invoices', match: (parts) => (parts.length === 1 && parts[0] === 'invoices' ? {} : null) },
   { name: 'invoiceDetail', match: (parts) => (parts.length === 2 && parts[0] === 'invoices' ? { id: parts[1] } : null) },
+  { name: 'recurring', match: (parts) => (parts.length === 1 && parts[0] === 'recurring' ? {} : null) },
 ];
 
 export function parseHash(hash) {
