@@ -636,4 +636,30 @@ describe('setStripeLink', () => {
   it('returns not_found for unknown id', () => {
     expect(setStripeLink(db, 9999, 'https://buy.stripe.com/x', { actor: admin }).reason).toBe('not_found');
   });
+
+  it('clears stripe_payment_link_id when URL is manually overwritten (Stage 7A)', () => {
+    // Simulate a previous programmatic generate() by stamping in an id.
+    db.prepare(
+      `UPDATE invoices
+          SET stripe_payment_link_url = 'https://buy.stripe.com/old',
+              stripe_payment_link_id  = 'plink_old'
+        WHERE id = ?`
+    ).run(draftId);
+
+    const r = setStripeLink(db, draftId, 'https://buy.stripe.com/new', { actor: admin });
+    expect(r.ok).toBe(true);
+    expect(r.invoice.stripe_payment_link_url).toBe('https://buy.stripe.com/new');
+    expect(r.invoice.stripe_payment_link_id).toBeNull();
+
+    const audit = db
+      .prepare("SELECT * FROM admin_audit WHERE action = 'invoice.update_stripe_link' ORDER BY id DESC LIMIT 1")
+      .get();
+    const changes = db
+      .prepare('SELECT field, old_value, new_value FROM audit_changes WHERE audit_id = ? ORDER BY field')
+      .all(audit.id);
+    expect(changes).toEqual([
+      { field: 'stripe_payment_link_id', old_value: 'plink_old', new_value: null },
+      { field: 'stripe_payment_link_url', old_value: 'https://buy.stripe.com/old', new_value: 'https://buy.stripe.com/new' },
+    ]);
+  });
 });

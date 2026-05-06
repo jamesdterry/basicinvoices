@@ -181,16 +181,56 @@ export async function invoiceDetail({ id }, mount) {
       );
     }
     if (!invoice.stripe_payment_link_url && !canEdit) return null;
-    return h('p', { class: 'muted' },
-      'Stripe link: ',
-      invoice.stripe_payment_link_url
-        ? h('span', {}, invoice.stripe_payment_link_url)
-        : h('em', {}, 'none set'),
-      canEdit && !editing
-        ? h('button', { class: 'btn secondary', style: 'margin-left:.5rem',
-            onclick: () => { editStripeLink = true; render(); } },
-            invoice.stripe_payment_link_url ? 'Edit Stripe link' : 'Add Stripe link')
-        : null,
+
+    const stripeEnabled = state.currentUser?.stripe_enabled === true;
+    const stripeError = h('div', { class: 'error', hidden: true, style: 'margin-top:.25rem' });
+    const isRegenerate = !!invoice.stripe_payment_link_id;
+    const generateBtn = canEdit && stripeEnabled && !editing
+      ? h('button', {
+          class: 'btn secondary', style: 'margin-left:.5rem',
+          onclick: async (e) => {
+            e.preventDefault();
+            if (isRegenerate && !window.confirm('Replace existing Stripe link?')) return;
+            stripeError.hidden = true;
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            try {
+              await postJson(
+                `/api/invoices/${numId}/stripe-link/generate`,
+                isRegenerate ? { force: true } : {},
+              );
+              await refresh();
+              render();
+            } catch (err) {
+              const reason = err?.body?.error || err.message || 'Generate failed';
+              stripeError.textContent =
+                reason === 'stripe_disabled'
+                  ? 'Stripe is not configured'
+                  : reason === 'stripe_failure'
+                    ? 'Stripe API error — see error log'
+                    : reason;
+              stripeError.hidden = false;
+            } finally {
+              btn.disabled = false;
+            }
+          },
+        }, isRegenerate ? 'Regenerate Stripe link' : 'Generate Stripe link')
+      : null;
+
+    return h('div', { class: 'stack' },
+      h('p', { class: 'muted', style: 'margin:0' },
+        'Stripe link: ',
+        invoice.stripe_payment_link_url
+          ? h('span', {}, invoice.stripe_payment_link_url)
+          : h('em', {}, 'none set'),
+        canEdit && !editing
+          ? h('button', { class: 'btn secondary', style: 'margin-left:.5rem',
+              onclick: () => { editStripeLink = true; render(); } },
+              invoice.stripe_payment_link_url ? 'Edit Stripe link' : 'Add Stripe link')
+          : null,
+        generateBtn,
+      ),
+      stripeError,
     );
   }
 

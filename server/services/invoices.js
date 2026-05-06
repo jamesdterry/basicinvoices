@@ -23,6 +23,7 @@
 import crypto from 'node:crypto';
 import { logAction } from './audit.js';
 import { invoiceHasPayments } from './payments.js';
+import * as stripeLinks from './stripeLinks.js';
 
 const DATE_RX = /^\d{4}-\d{2}-\d{2}$/;
 const TOKEN_BYTES = 24;                                  // → 32-char base64url
@@ -75,6 +76,7 @@ function rowToInvoice(row) {
     amount_paid_cents: row.amount_paid_cents,
     notes: row.notes,
     stripe_payment_link_url: row.stripe_payment_link_url,
+    stripe_payment_link_id: row.stripe_payment_link_id,
     public_token: row.public_token,
     public_token_revoked_at: row.public_token_revoked_at,
     created_by: row.created_by,
@@ -570,6 +572,13 @@ export function voidInvoice(db, id, { actor, ip } = {}) {
     ip,
   });
 
+  // Stage 7A — best-effort: deactivate the Stripe Payment Link so clients
+  // who still hold the URL can't pay against a voided invoice. The void is
+  // the source of truth; deactivate() catches its own errors and writes to
+  // error_log, but we add a .catch() guard so a rejected promise can't
+  // produce an unhandledRejection if deactivate is ever changed.
+  stripeLinks.deactivate(db, id).catch(() => {});
+
   return { ok: true, invoice: rowToInvoice(getInvoiceRow(db, id)) };
 }
 
@@ -677,12 +686,30 @@ export function setStripeLink(db, id, rawUrl, { actor, ip } = {}) {
     return { ok: true, invoice: rowToInvoice(existing) };
   }
 
+  // A manually pasted URL is opaque to us — we have no Stripe `plink_xxx`
+  // for it, so any previously-tracked id is stale and must be cleared.
+  // Otherwise voidInvoice would later try to deactivate the wrong link.
   const at = nowIso();
   db.prepare(
     `UPDATE invoices
-        SET stripe_payment_link_url = ?, updated_at = ?
+        SET stripe_payment_link_url = ?, stripe_payment_link_id = NULL, updated_at = ?
       WHERE id = ?`
   ).run(url, at, id);
+
+  const changes = [
+    {
+      field: 'stripe_payment_link_url',
+      oldValue: existing.stripe_payment_link_url,
+      newValue: url,
+    },
+  ];
+  if (existing.stripe_payment_link_id) {
+    changes.push({
+      field: 'stripe_payment_link_id',
+      oldValue: existing.stripe_payment_link_id,
+      newValue: null,
+    });
+  }
 
   logAction(db, {
     actorId: actor.id,
@@ -691,13 +718,7 @@ export function setStripeLink(db, id, rawUrl, { actor, ip } = {}) {
     targetId: id,
     summary: `Updated Stripe link on invoice ${existing.number} for ${existing.client_name}`,
     ip,
-    changes: [
-      {
-        field: 'stripe_payment_link_url',
-        oldValue: existing.stripe_payment_link_url,
-        newValue: url,
-      },
-    ],
+    changes,
   });
 
   return { ok: true, invoice: rowToInvoice(getInvoiceRow(db, id)) };

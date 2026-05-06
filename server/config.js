@@ -51,5 +51,10 @@ export const config = Object.freeze({
     pass: env.SMTP_PASS || '',
     from: env.SMTP_FROM || '',
   },
+  // Stage 7A — optional. When unset, services/stripeLinks.js#isEnabled()
+  // returns false, the /api/me payload reports stripe_enabled: false, and
+  // the Generate-link route returns 503 'stripe_disabled'. Manual paste of
+  // a Stripe Payment Link URL keeps working regardless.
+  stripeSecretKey: env.STRIPE_SECRET_KEY || '',
   cookiePrefix: 'bi_',
 });

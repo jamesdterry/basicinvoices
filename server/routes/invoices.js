@@ -7,6 +7,7 @@ import { clientIp } from '../middleware/rateLimit.js';
 import * as invoices from '../services/invoices.js';
 import * as invoiceMail from '../services/invoiceMail.js';
 import * as payments from '../services/payments.js';
+import * as stripeLinks from '../services/stripeLinks.js';
 import { renderInvoiceHtml } from '../views/invoice.html.js';
 
 export const invoicesRouter = Router();
@@ -29,6 +30,10 @@ function statusFor(reason) {
     case 'no_client_email':
     case 'has_payments':
       return 409;
+    case 'stripe_failure':
+      return 502;
+    case 'stripe_disabled':
+      return 503;
     default:
       return 400;
   }
@@ -141,6 +146,17 @@ invoicesRouter.put('/:id/stripe-link', (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
   const url = req.body?.url ?? req.body?.stripe_payment_link_url ?? null;
   const r = invoices.setStripeLink(db, id, url, { actor: req.user, ip: clientIp(req) });
+  if (!r.ok) return res.status(statusFor(r.reason)).json({ error: r.reason });
+  res.json({ invoice: r.invoice });
+});
+
+invoicesRouter.post('/:id/stripe-link/generate', async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const r = await stripeLinks.generate(db, id, {
+    actor: req.user,
+    ip: clientIp(req),
+    force: req.body?.force === true,
+  });
   if (!r.ok) return res.status(statusFor(r.reason)).json({ error: r.reason });
   res.json({ invoice: r.invoice });
 });
