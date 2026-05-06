@@ -69,4 +69,5 @@ Subs only see projects where they are a member; super-admin sees all. Subs never
 ## Reference
 
 `DEVELOPMENT.md` — staged build plan (each stage is independently shippable).
+`DEPLOY.md` — production deploy runbook (fly secrets, GitHub secrets, rotation, recovery).
 `WEBAPP_PLAYBOOK.md` — portable Node + SQLite + Fly conventions this app inherits.
