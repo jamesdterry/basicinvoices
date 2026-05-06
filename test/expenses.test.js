@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { makeTestDb } from './db.js';
+import { makeTestDb, insertStubInvoice } from './db.js';
 import { create as createClient } from '../server/services/clients.js';
 import { create as createProject } from '../server/services/projects.js';
 import {
@@ -139,7 +139,8 @@ describe('update', () => {
 
   it('rejects update on a locked (invoiced) row', () => {
     const r = create(db, goodExpense(), { actor: admin });
-    db.prepare('UPDATE expenses SET invoice_id = 999 WHERE id = ?').run(r.entry.id);
+    const invoiceId = insertStubInvoice(db, project.id);
+    db.prepare('UPDATE expenses SET invoice_id = ? WHERE id = ?').run(invoiceId, r.entry.id);
     const u = update(db, r.entry.id, { description: 'X' }, { actor: admin });
     expect(u.ok).toBe(false);
     expect(u.reason).toBe('locked');
@@ -172,7 +173,8 @@ describe('remove', () => {
 
   it('rejects deleting a locked row', () => {
     const r = create(db, goodExpense(), { actor: admin });
-    db.prepare('UPDATE expenses SET invoice_id = 999 WHERE id = ?').run(r.entry.id);
+    const invoiceId = insertStubInvoice(db, project.id);
+    db.prepare('UPDATE expenses SET invoice_id = ? WHERE id = ?').run(invoiceId, r.entry.id);
     expect(remove(db, r.entry.id, { actor: admin }).reason).toBe('locked');
   });
 
@@ -221,7 +223,8 @@ describe('list', () => {
 
   it('hides locked rows by default and reveals them with includeLocked', () => {
     const all = list(db, {}, admin);
-    db.prepare('UPDATE expenses SET invoice_id = 999 WHERE id = ?').run(all[0].id);
+    const invoiceId = insertStubInvoice(db, all[0].project_id);
+    db.prepare('UPDATE expenses SET invoice_id = ? WHERE id = ?').run(invoiceId, all[0].id);
     expect(list(db, {}, admin)).toHaveLength(3);
     expect(list(db, { includeLocked: true }, admin)).toHaveLength(4);
   });

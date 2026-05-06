@@ -14,6 +14,8 @@ import { projectsRouter } from './routes/projects.js';
 import { timeEntriesRouter } from './routes/timeEntries.js';
 import { expensesRouter } from './routes/expenses.js';
 import { milestonesRouter } from './routes/milestones.js';
+import { invoicesRouter } from './routes/invoices.js';
+import { publicInvoiceRouter } from './routes/publicInvoice.js';
 import { usersRouter } from './routes/users.js';
 import { csrf } from './middleware/csrf.js';
 import { loadSessionFromCookie, gateAppShell } from './middleware/requireUser.js';
@@ -48,6 +50,12 @@ export function createApp() {
   app.use(compression());
   app.use(cookieParser());
   app.use(express.json({ limit: '1mb' }));
+
+  // Public unauthenticated invoice viewer. Mounted BEFORE csrf +
+  // loadSessionFromCookie so it never touches bi_session / bi_csrf — the
+  // public link must work in browsers that have no relationship with the app.
+  app.use('/i', publicInvoiceRouter);
+
   app.use(csrf);
   app.use(loadSessionFromCookie);
 
@@ -59,6 +67,7 @@ export function createApp() {
   app.use('/api/time-entries', timeEntriesRouter);
   app.use('/api/expenses', expensesRouter);
   app.use('/api/milestones', milestonesRouter);
+  app.use('/api/invoices', invoicesRouter);
   app.use('/api/users', usersRouter);
 
   // App-shell gating: only / and /index.html require a session. Everything

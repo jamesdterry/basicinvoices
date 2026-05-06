@@ -7,6 +7,8 @@ import { clientDetail } from '/views/clientDetail.js';
 import { projects } from '/views/projects.js';
 import { projectDetail } from '/views/projectDetail.js';
 import { timeEntries } from '/views/timeEntries.js';
+import { invoices } from '/views/invoices.js';
+import { invoiceDetail } from '/views/invoiceDetail.js';
 
 const handlers = {
   home(_params, mount) {
@@ -32,6 +34,8 @@ const handlers = {
   projects,
   projectDetail,
   timeEntries,
+  invoices,
+  invoiceDetail,
 };
 
 const navHost = document.getElementById('nav');

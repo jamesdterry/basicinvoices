@@ -9,6 +9,8 @@ export const ROUTES = [
   { name: 'projects', match: (parts) => (parts.length === 1 && parts[0] === 'projects' ? {} : null) },
   { name: 'projectDetail', match: (parts) => (parts.length === 2 && parts[0] === 'projects' ? { id: parts[1] } : null) },
   { name: 'timeEntries', match: (parts) => (parts.length === 1 && parts[0] === 'time-entries' ? {} : null) },
+  { name: 'invoices', match: (parts) => (parts.length === 1 && parts[0] === 'invoices' ? {} : null) },
+  { name: 'invoiceDetail', match: (parts) => (parts.length === 2 && parts[0] === 'invoices' ? { id: parts[1] } : null) },
 ];
 
 export function parseHash(hash) {

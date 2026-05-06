@@ -147,3 +147,8 @@ td a:hover { text-decoration: underline; }
   color: var(--muted);
   margin-left: 0.5rem;
 }
+
+.tag.status-draft  { background: #f3f3f3; color: var(--muted); }
+.tag.status-sent   { background: #e8f0ff; color: var(--accent); border-color: #c0d6ff; }
+.tag.status-paid   { background: #e8f6e8; color: #1f7a1f;     border-color: #b9dfb9; }
+.tag.status-void   { background: #fbe8e8; color: #9b1c1c;     border-color: #e7b6b6; }

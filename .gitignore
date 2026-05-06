@@ -11,4 +11,4 @@ dist/
 playwright-report/
 test-results/
 .auth/
-
+.claude/

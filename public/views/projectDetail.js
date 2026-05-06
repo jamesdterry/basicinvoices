@@ -1,15 +1,10 @@
 import { h, state } from '/lib/state.js';
 import { getJson, patchJson, postJson, deleteJson } from '/lib/api.js';
+import { formatMoney } from '/lib/money.js';
 import { ProjectForm } from '/components/projectForm.js';
 import { MemberRow } from '/components/memberRow.js';
 import { ExpenseForm } from '/components/expenseForm.js';
 import { MilestoneForm } from '/components/milestoneForm.js';
-
-function formatMoney(cents) {
-  if (cents == null) return '';
-  const n = Number(cents) / 100;
-  return `$${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/, ',')}`;
-}
 
 export async function projectDetail({ id }, mount) {
   mount.replaceChildren(h('main', { class: 'wide stack' }, h('p', { class: 'muted' }, 'Loading…')));
@@ -52,6 +47,7 @@ export async function projectDetail({ id }, mount) {
   let editingExpenseId = null;
   let addingMilestone = false;
   let editingMilestoneId = null;
+  let invoicingState = null;       // null | 'configuring' | { preview }
 
   async function refreshMembers() {
     ({ members } = await getJson(`/api/projects/${numId}/members`));
@@ -336,6 +332,158 @@ export async function projectDetail({ id }, mount) {
     );
   }
 
+  function todayIso() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function addDays(iso, days) {
+    const d = new Date(iso);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function invoiceSection() {
+    if (!invoicingState) {
+      return h('section', { class: 'stack' },
+        h('div', { class: 'row' },
+          h('h2', {}, 'Invoicing'),
+          h('span', { class: 'spacer' }),
+          h('button', { class: 'btn',
+            onclick: () => { invoicingState = 'configuring'; render(); },
+          }, 'Create invoice'),
+          h('a', { class: 'btn secondary', href: `#/invoices?project_id=${numId}` }, 'View all'),
+        ),
+        h('p', { class: 'muted' },
+          'Pulls every unbilled time entry, expense, and milestone up to "Through" into a draft invoice.'
+        ),
+      );
+    }
+
+    if (invoicingState === 'configuring') {
+      const today = todayIso();
+      const through = h('input', { type: 'date', value: today });
+      const issue = h('input', { type: 'date', value: today });
+      // Default due = issue + client.payment_terms_days (fall back to 14 —
+      // the project payload doesn't carry the client's terms, so we look them
+      // up from clientList which projectDetail already loads for super-admin).
+      const clientRow = clientList.find((c) => c.id === project.client_id);
+      const terms = Number(clientRow?.payment_terms_days ?? 14);
+      const due = h('input', { type: 'date', value: addDays(today, terms) });
+      issue.addEventListener('change', () => { due.value = addDays(issue.value, terms); });
+      const notes = h('textarea', { placeholder: 'Optional notes for the invoice' });
+      const error = h('div', { class: 'error', hidden: true });
+      const previewBtn = h('button', { class: 'btn', type: 'submit' }, 'Preview');
+      const cancel = h('button', { class: 'btn secondary', type: 'button',
+        onclick: () => { invoicingState = null; render(); },
+      }, 'Cancel');
+
+      return h('form', { class: 'stack',
+        onsubmit: async (e) => {
+          e.preventDefault();
+          error.hidden = true;
+          previewBtn.disabled = true;
+          try {
+            const r = await postJson('/api/invoices/preview', {
+              project_id: numId,
+              through_date: through.value,
+            });
+            invoicingState = {
+              preview: r,
+              throughDate: through.value,
+              issueDate: issue.value,
+              dueDate: due.value,
+              notes: notes.value,
+            };
+            render();
+          } catch (err) {
+            error.textContent = err?.body?.error || err.message || 'Preview failed';
+            error.hidden = false;
+          } finally {
+            previewBtn.disabled = false;
+          }
+        },
+      },
+        h('h2', {}, 'Create invoice'),
+        h('div', { class: 'field' }, h('label', {}, 'Through (cutoff)'), through),
+        h('div', { class: 'field' }, h('label', {}, 'Issue date'), issue),
+        h('div', { class: 'field' }, h('label', {}, 'Due date'), due),
+        h('div', { class: 'field' }, h('label', {}, 'Notes'), notes),
+        error,
+        h('div', { class: 'row' }, previewBtn, cancel),
+      );
+    }
+
+    // Preview confirmation phase.
+    const { preview, throughDate, issueDate, dueDate, notes } = invoicingState;
+    const tbody = h('tbody');
+    if (!preview.lines.length) {
+      tbody.appendChild(h('tr', {},
+        h('td', { colspan: '4', class: 'muted' }, 'Nothing unbilled in this range.'),
+      ));
+    }
+    for (const l of preview.lines) {
+      tbody.appendChild(h('tr', {},
+        h('td', {}, h('span', { class: 'tag' }, l.kind)),
+        h('td', {}, l.description),
+        h('td', {}, l.kind === 'time' ? `${l.quantity} hr × ${formatMoney(l.unit_rate_cents)}` : ''),
+        h('td', {}, formatMoney(l.amount_cents)),
+      ));
+    }
+    const error = h('div', { class: 'error', hidden: true });
+    const confirmBtn = h('button', {
+      class: 'btn',
+      disabled: preview.lines.length === 0,
+      onclick: async () => {
+        error.hidden = true;
+        confirmBtn.disabled = true;
+        try {
+          const r = await postJson('/api/invoices', {
+            project_id: numId,
+            through_date: throughDate,
+            issue_date: issueDate,
+            due_date: dueDate,
+            notes: notes || null,
+          });
+          invoicingState = null;
+          // Refresh expenses + milestones since some are now locked.
+          await Promise.all([refreshExpenses(), refreshMilestones()]);
+          window.location.hash = `#/invoices/${r.invoice.id}`;
+        } catch (err) {
+          error.textContent = err?.body?.error || err.message || 'Create failed';
+          error.hidden = false;
+          confirmBtn.disabled = false;
+        }
+      },
+    }, 'Create draft');
+    const back = h('button', { class: 'btn secondary',
+      onclick: () => { invoicingState = 'configuring'; render(); },
+    }, 'Back');
+    const cancel = h('button', { class: 'btn secondary',
+      onclick: () => { invoicingState = null; render(); },
+    }, 'Cancel');
+
+    return h('section', { class: 'stack' },
+      h('h2', {}, 'Confirm draft'),
+      h('p', { class: 'muted' },
+        `Through ${throughDate} • Issue ${issueDate} • Due ${dueDate}`),
+      h('table', {},
+        h('thead', {}, h('tr', {},
+          h('th', {}, 'Kind'),
+          h('th', {}, 'Description'),
+          h('th', {}, 'Qty / Rate'),
+          h('th', {}, 'Amount'),
+        )),
+        tbody,
+      ),
+      h('div', { class: 'row' },
+        h('span', { class: 'spacer' }),
+        h('strong', {}, `Subtotal: ${formatMoney(preview.subtotal_cents)}`),
+      ),
+      error,
+      h('div', { class: 'row' }, confirmBtn, back, cancel),
+    );
+  }
+
   function render() {
     const detail = editing
       ? ProjectForm({
@@ -400,6 +548,7 @@ export async function projectDetail({ id }, mount) {
         memberTable(),
         isAdmin ? expensesSection() : null,
         isAdmin ? milestonesSection() : null,
+        isAdmin ? invoiceSection() : null,
       ),
     );
   }
