@@ -12,7 +12,10 @@ The consultant is the super admin; subcontractors log in to enter hours; clients
 - **Subcontractor rates**: one bill rate per (project, sub). Subs **never** see rates — service layer strips the field for non-super-admin callers.
 - **Clients**: separate entity. One client → many projects. Schema allows multi-project rollup on a future invoice; v1 UI = one project per invoice.
 - **Tax**: none in v1. (Add later via migration if ever needed.)
-- **Stripe**: optional, manual. Super-admin pastes a Stripe Payment Link URL onto an invoice; embedded in PDF/web view if present. No API integration, no webhook. Payments are recorded by hand (date, amount, method, reference, note); partial payments allowed.
+- **Stripe**: optional. Two paths land on the same `invoices.stripe_payment_link_url` field:
+  - **Manual (Stage 7).** When `STRIPE_SECRET_KEY` is unset, the super-admin pastes a Stripe Payment Link URL by hand. Zero Stripe-account-setup friction; works fully offline.
+  - **Programmatic (Stage 7A).** When `STRIPE_SECRET_KEY` is set, the app calls Stripe's [Payment Links API](https://stripe.com/payments/payment-links) to mint a link for the invoice's `total_cents` and persist it on the row. Stage 8 recurring schedules opt in via a per-project `auto_stripe_link` flag so accumulated/fixed drafts drop already paid-link-ready.
+  - Either way, **payments are still recorded by hand in v1** (date, amount, method, reference, note); partial payments allowed. A Stripe webhook that auto-records receipts (`checkout.session.completed`) is a follow-up — Stage 7B / future, deliberately not in 7A so the Stage 8 deadline isn't blocked on webhook reachability + signature verification.
 - **Time entry**: manual only, no live timer. Decimal hours.
 - **Expenses & milestones**: super-admin only. Mirror the time-entry "accumulate then roll into next invoice" pattern.
 - **Recurring billing**: per-project monthly. Two modes — accumulated time+expenses, or fixed milestone amount. Generated invoices land as **drafts** for review (never auto-send).
@@ -28,6 +31,7 @@ The consultant is the super admin; subcontractors log in to enter hours; clients
 - **Recurring timer**: in-process `setInterval` (hourly tick), reading `recurring_schedules.next_run_date`. Requires `min_machines_running = 1` in `fly.toml` so the machine doesn't sleep. This is a deliberate departure from the playbook's default; cost is negligible for one consultant and removes "cron didn't fire" failure modes.
 - **Audit log**: standard playbook pattern (`admin_audit` parent + `audit_changes` children). Resolve FK ids to display strings before writing. Log every client/project/member/invoice/payment/recurring mutation, including `project_member.rate_change` (old/new in `audit_changes`).
 - **Money**: stored as integer cents everywhere; rates as `INTEGER`-cents-per-hour. Hours stored as `REAL`.
+- **Stripe SDK**: server-side `stripe` (Node), Payment Links API only — no Checkout Sessions (24h expiry doesn't fit invoice life cycle), no Stripe Customers, no Stripe Invoices (richer but pulls in tax/customer/product setup we don't want). One inline `price_data` line item per Payment Link, currency hardcoded `'usd'` (matches v1). The link's `plink_xxx` id is persisted on the invoice row so we can deactivate it on void. `STRIPE_SECRET_KEY` is **optional** — `services/stripeLinks.isEnabled()` returns `false` when unset and the route returns 503; `config.js` does not fail-fast on it. **No webhook handler in v1** (Stage 7B).
 
 ## Schema (table by table)
 
@@ -59,13 +63,13 @@ Common columns: integer PK `id`, ISO-8601 `created_at`/`updated_at` unless noted
 
 **`milestones`** (Stage 4) — `id`, `project_id` FK, `created_by` FK, `milestone_date`, `description`, `amount_cents`, `invoice_id NULL` FK.
 
-**`invoices`** (Stage 5) — `id`, `number UNIQUE`, `client_id` FK, `status CHECK(IN ('draft','sent','paid','void'))`, `issue_date`, `due_date`, `period_start`, `period_end`, `subtotal_cents`, `total_cents` (= subtotal in v1), `amount_paid_cents DEFAULT 0` (denormalized; recomputed on payment write), `notes`, `stripe_payment_link_url`, `public_token UNIQUE`, `public_token_revoked_at NULL`, `created_by` FK, `sent_at NULL`.
+**`invoices`** (Stage 5) — `id`, `number UNIQUE`, `client_id` FK, `status CHECK(IN ('draft','sent','paid','void'))`, `issue_date`, `due_date`, `period_start`, `period_end`, `subtotal_cents`, `total_cents` (= subtotal in v1), `amount_paid_cents DEFAULT 0` (denormalized; recomputed on payment write), `notes`, `stripe_payment_link_url`, `stripe_payment_link_id NULL` (Stage 7A — Stripe's `plink_xxx`, persisted so we can deactivate on void), `public_token UNIQUE`, `public_token_revoked_at NULL`, `created_by` FK, `sent_at NULL`.
 
 **`invoice_lines`** (Stage 5) — `id`, `invoice_id` FK, `project_id` FK, `kind CHECK(IN ('time','expense','milestone'))`, `source_id` (id in source table; NULL for ad-hoc lines), `description`, `quantity REAL`, `unit_rate_cents` (**snapshotted** at invoice creation), `amount_cents`, `sort_order`, `user_id NULL` FK (which sub did the time, used for grouping in the rendered invoice), `entry_date NULL`. Index `(invoice_id, sort_order)`.
 
 **`payments`** (Stage 7) — `id`, `invoice_id` FK, `received_date`, `amount_cents`, `method` (free text: `stripe`, `ach`, `check`, `wire`, `cash`, `other`), `reference`, `note`, `created_by` FK, `created_at`. Service recomputes `invoices.amount_paid_cents` and flips status to `paid` when `amount_paid >= total` after every mutation.
 
-**`recurring_schedules`** (Stage 8) — `id`, `project_id` FK UNIQUE, `mode CHECK(IN ('time_and_expenses','fixed_milestone'))`, `cadence CHECK(='monthly')`, `day_of_month INTEGER CHECK(BETWEEN 1 AND 28)`, `fixed_amount_cents NULL` (required when `mode='fixed_milestone'`), `fixed_description NULL`, `next_run_date`, `last_run_date NULL`, `last_invoice_id NULL` FK, `paused_at NULL`.
+**`recurring_schedules`** (Stage 8) — `id`, `project_id` FK UNIQUE, `mode CHECK(IN ('time_and_expenses','fixed_milestone'))`, `cadence CHECK(='monthly')`, `day_of_month INTEGER CHECK(BETWEEN 1 AND 28)`, `fixed_amount_cents NULL` (required when `mode='fixed_milestone'`), `fixed_description NULL`, `auto_stripe_link INTEGER NOT NULL DEFAULT 0` (when 1, the recurring tick calls `stripeLinks.generate` after `createDraft`; failures land in `error_log` but don't block the draft), `next_run_date`, `last_run_date NULL`, `last_invoice_id NULL` FK, `paused_at NULL`.
 
 ## Project layout
 
@@ -87,7 +91,7 @@ basicinvoices/
     db/
       connection.js                  (PRAGMA WAL/foreign_keys/busy_timeout)
       migrate.js                     (runner + meta table)
-      migrations/0001_init.sql … 0008_recurring_schedules.sql
+      migrations/0001_init.sql … 0009_recurring_schedules.sql
       queries/                       (per-table query modules)
     services/                        (auth, clients, projects, projectMembers,
                                       timeEntries, expenses, milestones,
@@ -222,19 +226,46 @@ Routes: full CRUD + `POST /api/invoices/:id/send`, `…/void`, `…/rotate-token
 **Scope.** `services/invoicePdf.js` — launch one Puppeteer browser at boot; `renderInvoicePdf(invoiceId) → Buffer` reuses `previewHtml`; close on SIGTERM. `services/invoiceMail.js` — HTML body + PDF attachment + public link; falls back to stdout in dev. `invoices.send()` calls `invoiceMail.send()`. `GET /i/:token.pdf` renders on demand with a small in-memory LRU keyed by `invoice.updated_at`. "Resend email" action on invoice detail.
 **Tests.** PDF buffer starts with `%PDF-`; dev-mode logs structured `dev-email` line including the public link. E2E: send invoice, intercept dev-email log, fetch `.pdf` URL, assert non-empty PDF.
 
-### Stage 7 — Payments
+### Stage 7 — DONE Payments
 **Scope.** Migration `0007_payments.sql`. `services/payments.js` — `create`, `update`, `delete`. After every mutation, recompute `invoices.amount_paid_cents` and flip status to `paid` when fully covered (no auto-revert from `paid` on partial refund — operator handles). Audit each payment. Add `stripe_payment_link_url` editing on draft + sent flows; invoice template gains "Pay online" button when set. Routes: `GET /api/invoices/:id/payments`, `POST …`, `PATCH /api/payments/:id`, `DELETE /api/payments/:id`. View: `paymentForm.js` modal off invoice detail; status badge updates via `state.js`.
 **Tests.** Partial leaves status `sent`; sum flips to `paid`; deleting recomputes correctly. E2E: two partial payments summing to total → status flips, audit entries exist.
 
+### Stage 7A — Programmatic Stripe Payment Links
+Wraps Stripe's Payment Links API behind a service so the operator can mint a link from the invoice detail UI in one click and so Stage 8 recurring drafts can ship with a link already attached. Manual paste-the-URL stays supported for shops that never set a `STRIPE_SECRET_KEY`.
+
+**Scope.**
+- Add the official `stripe` npm package; pin the major version. Add `STRIPE_SECRET_KEY` to `config.js` as **optional** (no fail-fast). Document in README.
+- Migration `0008_invoices_stripe_link_id.sql` — `ALTER TABLE invoices ADD COLUMN stripe_payment_link_id TEXT` (nullable, no FK/CHECK; no table-rebuild needed for additive nullable columns in SQLite). This pushes recurring's migration to `0009_recurring_schedules.sql`; renumbering pre-Stage-8 is fine since 8 is unbuilt.
+- `services/stripeLinks.js`:
+  - `isEnabled()` → `Boolean(config.stripeSecretKey)`. The Stripe client is lazily constructed on first call (avoids importing `stripe` at boot when the key is unset).
+  - `generate(db, invoiceId, { actor, ip, force = false })` — super-admin only; allowed when `status IN ('draft','sent')` (else `'wrong_status'`); returns `'stripe_disabled'` when `!isEnabled()`. If `stripe_payment_link_id` is already set and `!force`, no-op + return existing row (idempotent — protects against double-clicks). Otherwise calls `stripe.paymentLinks.create({ line_items: [{ price_data: { currency: 'usd', unit_amount: invoice.total_cents, product_data: { name: \`Invoice ${number} — ${client_name} — ${project_name}\` } }, quantity: 1 }], metadata: { invoice_id, invoice_number } })`, persists `stripe_payment_link_url` + `stripe_payment_link_id` + `updated_at`, audits `'invoice.generate_stripe_link'` with a `changes` array. Stripe SDK errors are caught and surface as `'stripe_failure'` (502) — never thrown; the error message is logged via `logger.error` and stored in `error_log` for ops review.
+  - `deactivate(db, invoiceId)` — best-effort; called from `invoices.voidInvoice` after the void succeeds. Looks up `stripe_payment_link_id`; if set and `isEnabled()`, fires `stripe.paymentLinks.update(id, { active: false })`. Failures are logged but do **not** roll back the void — the local `void` status is the source of truth, and the operator can deactivate manually in the dashboard if needed.
+- `voidInvoice` integration: after the existing transaction succeeds, fire-and-forget `stripeLinks.deactivate`. Audit row already exists from `'invoice.void'`; no extra audit needed.
+- Routes (`server/routes/invoices.js`): `POST /api/invoices/:id/stripe-link/generate` → super-admin, statusFor adds `'stripe_disabled' → 503`, `'stripe_failure' → 502`. Returns `{ invoice }` on success.
+- `/api/me` gains `stripe_enabled: boolean` so the SPA can show/hide the Generate button without round-tripping. (Cheap to compute; consumed by `state.currentUser.stripe_enabled` on the frontend.)
+- Frontend (`public/views/invoiceDetail.js`): the existing Stripe-link row gets a "Generate Stripe link" button next to "Edit Stripe link", visible only when `stripe_enabled && status IN ('draft','sent')`. If `stripe_payment_link_url` is already set, the button label switches to "Regenerate" and confirms before overwriting (the operator may have a manual link they want to keep). Errors render inline via the existing `error` div pattern.
+- The rendered invoice template (`server/views/invoice.html.js`) is unchanged — it already shows the "Pay online" button when `stripe_payment_link_url` is set.
+
+**Tests.**
+- Vitest with `vi.mock('stripe')` injecting a fake client. Cases: (1) happy path persists URL + id and audits with `changes`; (2) idempotency — second call without `force` is a no-op (Stripe mock not called again); (3) `force: true` re-creates and audits the URL change; (4) `'stripe_disabled'` when no key configured (importing `services/stripeLinks.js` must work without the key); (5) `'stripe_failure'` when Stripe mock throws; (6) `wrong_status` on `paid`/`void`; (7) `forbidden` for sub actors; (8) `voidInvoice` calls `deactivate` (Stripe mock asserted) and survives a Stripe failure without rolling back the void.
+- E2E: only the disabled path (default e2e env doesn't set `STRIPE_SECRET_KEY`) — assert `POST /stripe-link/generate` returns 503 + `/api/me` exposes `stripe_enabled: false` + the "Generate" button is absent in the DOM. The "happy" path is left to the manual smoke step below; running e2e against the real Stripe API would require a sandbox account in CI and add flake.
+
+**Verification.**
+1. With **no** `STRIPE_SECRET_KEY`: existing manual flow still works; Generate button is hidden; the route returns 503.
+2. Export `STRIPE_SECRET_KEY=sk_test_...` from a Stripe test-mode account, restart the server, log in as super-admin, draft an invoice, click "Generate Stripe link". Confirm `https://buy.stripe.com/...` appears, `sqlite3 data/basicinvoices.sqlite "SELECT stripe_payment_link_id FROM invoices WHERE id = N"` returns a `plink_...` id, and the rendered invoice shows the "Pay online" button. Clicking through hits the test-mode checkout in Stripe.
+3. Void the invoice; confirm in the Stripe dashboard that the Payment Link is no longer active.
+4. Click "Regenerate" on a sent invoice with an existing link; confirm the URL/id changes, audit row written with `changes`.
+
 ### Stage 8 — Recurring billing
-**Scope.** Migration `0008_recurring_schedules.sql`. `services/recurring.js` — `setSchedule`, `pause`, `resume`, `runDue(now = new Date())`. The `runDue` actor is a synthetic system user (`{ id: null, role: 'super_admin' }`) so audit rows attribute correctly; `services/timeEntries.js` and friends accept `actorId == null` (admin_audit row stores NULL). For each row where `paused_at IS NULL AND next_run_date <= today`:
+**Scope.** Migration `0009_recurring_schedules.sql` (renumbered post-7A). `services/recurring.js` — `setSchedule`, `pause`, `resume`, `runDue(now = new Date())`. The `runDue` actor is a synthetic system user (`{ id: null, role: 'super_admin' }`) so audit rows attribute correctly; `services/timeEntries.js` and friends accept `actorId == null` (admin_audit row stores NULL). For each row where `paused_at IS NULL AND next_run_date <= today`:
 - mode `time_and_expenses`: `invoices.createDraft(projectId, { throughDate: today })`.
 - mode `fixed_milestone`: insert a `milestones` row with `fixed_amount_cents` + `fixed_description`, then `invoices.createDraft(...)` so the milestone gets pulled in (single code path).
+- If `auto_stripe_link = 1` and `stripeLinks.isEnabled()`: best-effort call to `stripeLinks.generate(db, draftId, { actor, ip: null })` after the draft transaction commits. Stripe failures land in `error_log` + audit `'recurring.run'` with `status='partial'` but the draft still drops as-is for the operator to handle.
 - Update `last_run_date`, `last_invoice_id`, advance `next_run_date` by one calendar month (clamped to `day_of_month` ≤ 28).
 - Each row's run wrapped in its own try/catch + transaction — one failure doesn't block siblings; failures land in `error_log` + audit `recurring.run` with `status='error'`.
 
-`server/timers/recurringTick.js` — `setInterval(() => recurring.runDue(), 60 * 60 * 1000)` started from `index.js` (skipped in `NODE_ENV=test`). Routes: `GET/PUT /api/projects/:id/recurring`, `POST .../pause`, `POST .../resume`, `POST /api/admin/recurring/run-now` (manual trigger). View: `recurring.js`.
-**Tests.** With frozen `now`, three schedules with various `next_run_date`s: only due ones run; failed row doesn't block others; advance honors `day_of_month` clamp. E2E: super-admin sets up a fixed retainer, "run now", a draft appears.
+`server/timers/recurringTick.js` — `setInterval(() => recurring.runDue(), 60 * 60 * 1000)` started from `index.js` (skipped in `NODE_ENV=test`). Routes: `GET/PUT /api/projects/:id/recurring`, `POST .../pause`, `POST .../resume`, `POST /api/admin/recurring/run-now` (manual trigger). View: `recurring.js` — schedule form includes an "Auto-generate Stripe Payment Link" checkbox (disabled + greyed when `!stripe_enabled`).
+**Tests.** With frozen `now`, three schedules with various `next_run_date`s: only due ones run; failed row doesn't block others; advance honors `day_of_month` clamp. With `auto_stripe_link=1` + a mocked Stripe client, the generated draft has `stripe_payment_link_url` populated; with the same flag but `!isEnabled()`, the draft drops without a URL and recurring doesn't error. E2E: super-admin sets up a fixed retainer, "run now", a draft appears.
 **Verification.** Drafts (never sent) appear; super-admin reviews and sends manually. Confirm `min_machines_running=1` in prod.
 
 ### Stage 9 — Reports + CSV
@@ -263,8 +294,9 @@ The five files most central to the build; everything else hangs off these:
 7. Preview an invoice "through today" — confirm time + expense + milestone all appear; line rates match `project_members`.
 8. Create the draft, change the rate on `project_members` afterwards, confirm the invoice line rate is unchanged.
 9. Send the invoice; intercept the dev-email log, open the public link in an incognito window, confirm read-only HTML; fetch the `.pdf` URL.
-10. Record two partial payments via different methods; confirm status flips to `paid` after the second.
-11. Set up a monthly recurring schedule on the project; hit "run now"; confirm a new draft appears (not sent).
-12. Open `/api/reports/payments?from=…&to=…&groupBy=client&format=csv` and download.
-13. Run `npm run test` (vitest) and `npm run e2e` (Playwright).
-14. `docker build .` then `fly deploy`; smoke `/healthz` against the deployed URL; confirm `min_machines_running = 1` in `fly.toml`.
+10. With `STRIPE_SECRET_KEY=sk_test_...` exported, click "Generate Stripe link" on the invoice; confirm `stripe_payment_link_url` is set and the "Pay online" button renders. Without a key set, confirm the button is hidden.
+11. Record two partial payments via different methods; confirm status flips to `paid` after the second.
+12. Set up a monthly recurring schedule on the project with "Auto-generate Stripe Payment Link" checked; hit "run now"; confirm a new draft appears with a Payment Link already attached. Untick the box on a second project and confirm its draft drops without a link.
+13. Open `/api/reports/payments?from=…&to=…&groupBy=client&format=csv` and download.
+14. Run `npm run test` (vitest) and `npm run e2e` (Playwright).
+15. `docker build .` then `fly deploy`; smoke `/healthz` against the deployed URL; confirm `min_machines_running = 1` in `fly.toml`.
