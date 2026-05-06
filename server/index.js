@@ -15,6 +15,7 @@ import { timeEntriesRouter } from './routes/timeEntries.js';
 import { expensesRouter } from './routes/expenses.js';
 import { milestonesRouter } from './routes/milestones.js';
 import { invoicesRouter } from './routes/invoices.js';
+import { paymentsRouter } from './routes/payments.js';
 import { publicInvoiceRouter } from './routes/publicInvoice.js';
 import { usersRouter } from './routes/users.js';
 import { csrf } from './middleware/csrf.js';
@@ -69,6 +70,7 @@ export function createApp() {
   app.use('/api/expenses', expensesRouter);
   app.use('/api/milestones', milestonesRouter);
   app.use('/api/invoices', invoicesRouter);
+  app.use('/api/payments', paymentsRouter);
   app.use('/api/users', usersRouter);
 
   // App-shell gating: only / and /index.html require a session. Everything

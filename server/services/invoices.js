@@ -22,6 +22,7 @@
 
 import crypto from 'node:crypto';
 import { logAction } from './audit.js';
+import { invoiceHasPayments } from './payments.js';
 
 const DATE_RX = /^\d{4}-\d{2}-\d{2}$/;
 const TOKEN_BYTES = 24;                                  // → 32-char base64url
@@ -547,6 +548,10 @@ export function voidInvoice(db, id, { actor, ip } = {}) {
   const existing = getInvoiceRow(db, id);
   if (!existing) return { ok: false, reason: 'not_found' };
   if (existing.status === 'void') return { ok: false, reason: 'wrong_status' };
+  // Block voiding while payments exist — the FK is ON DELETE RESTRICT and
+  // surfacing a clean 'has_payments' (409) is friendlier than a raw FK
+  // violation. Operator must delete payments first.
+  if (invoiceHasPayments(db, id)) return { ok: false, reason: 'has_payments' };
 
   const at = nowIso();
   db.transaction(() => {
@@ -575,6 +580,9 @@ export function deleteDraft(db, id, { actor, ip } = {}) {
   const existing = getInvoiceRow(db, id);
   if (!existing) return { ok: false, reason: 'not_found' };
   if (existing.status !== 'draft') return { ok: false, reason: 'wrong_status' };
+  // Belt-and-braces: payments are only allowed on sent/paid invoices, so a
+  // draft shouldn't have any. The FK is RESTRICT either way.
+  if (invoiceHasPayments(db, id)) return { ok: false, reason: 'has_payments' };
 
   db.transaction(() => {
     detachAllSources(db, id);
@@ -643,6 +651,53 @@ export function revokePublicLink(db, id, { actor, ip } = {}) {
     targetId: id,
     summary: `Revoked public link for invoice ${existing.number}`,
     ip,
+  });
+
+  return { ok: true, invoice: rowToInvoice(getInvoiceRow(db, id)) };
+}
+
+// Edits the stripe_payment_link_url on draft + sent invoices. updateDraft
+// already handles this column for drafts; setStripeLink is the post-send-safe
+// path so the operator can paste in a Payment Link after dispatch (Stage 7).
+export function setStripeLink(db, id, rawUrl, { actor, ip } = {}) {
+  if (!actor) return { ok: false, reason: 'unauthorized' };
+  if (!isSuperAdmin(actor)) return { ok: false, reason: 'forbidden' };
+
+  const existing = getInvoiceRow(db, id);
+  if (!existing) return { ok: false, reason: 'not_found' };
+  if (existing.status !== 'draft' && existing.status !== 'sent') {
+    return { ok: false, reason: 'wrong_status' };
+  }
+
+  const url = rawUrl == null || rawUrl === '' ? null : String(rawUrl).trim();
+  if (url && !/^https?:\/\//i.test(url)) {
+    return { ok: false, reason: 'invalid_stripe_url' };
+  }
+  if (url === existing.stripe_payment_link_url) {
+    return { ok: true, invoice: rowToInvoice(existing) };
+  }
+
+  const at = nowIso();
+  db.prepare(
+    `UPDATE invoices
+        SET stripe_payment_link_url = ?, updated_at = ?
+      WHERE id = ?`
+  ).run(url, at, id);
+
+  logAction(db, {
+    actorId: actor.id,
+    action: 'invoice.update_stripe_link',
+    targetKind: 'invoice',
+    targetId: id,
+    summary: `Updated Stripe link on invoice ${existing.number} for ${existing.client_name}`,
+    ip,
+    changes: [
+      {
+        field: 'stripe_payment_link_url',
+        oldValue: existing.stripe_payment_link_url,
+        newValue: url,
+      },
+    ],
   });
 
   return { ok: true, invoice: rowToInvoice(getInvoiceRow(db, id)) };

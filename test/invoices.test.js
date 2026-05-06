@@ -16,10 +16,12 @@ import {
   deleteDraft,
   rotatePublicToken,
   revokePublicLink,
+  setStripeLink,
   list,
   get,
   getByPublicToken,
 } from '../server/services/invoices.js';
+import { create as createPayment } from '../server/services/payments.js';
 
 let db;
 let admin;
@@ -542,5 +544,96 @@ describe('list / get / RBAC', () => {
     const id = list(db, {}, admin)[0].id;
     expect(get(db, id, sub)).toBeNull();
     expect(get(db, id, admin)).not.toBeNull();
+  });
+});
+
+describe('voidInvoice — has_payments guard', () => {
+  it('rejects voiding an invoice that has payments', () => {
+    createTimeEntry(
+      db,
+      { project_id: project.id, entry_date: '2026-05-04', hours: 1, description: 'Work' },
+      { actor: sub }
+    );
+    const r = createDraft(db, draftPayload(), { actor: admin });
+    send(db, r.invoice.id, { actor: admin });
+    createPayment(
+      db,
+      { invoice_id: r.invoice.id, received_date: '2026-06-01', amount_cents: 1000, method: 'check' },
+      { actor: admin }
+    );
+    const v = voidInvoice(db, r.invoice.id, { actor: admin });
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe('has_payments');
+  });
+});
+
+describe('setStripeLink', () => {
+  let draftId;
+  beforeEach(() => {
+    createTimeEntry(
+      db,
+      { project_id: project.id, entry_date: '2026-05-04', hours: 1, description: 'Work' },
+      { actor: sub }
+    );
+    const r = createDraft(db, draftPayload(), { actor: admin });
+    draftId = r.invoice.id;
+  });
+
+  it('updates link on a draft invoice', () => {
+    const r = setStripeLink(db, draftId, 'https://buy.stripe.com/test_abc', { actor: admin });
+    expect(r.ok).toBe(true);
+    expect(r.invoice.stripe_payment_link_url).toBe('https://buy.stripe.com/test_abc');
+  });
+
+  it('updates link on a sent invoice', () => {
+    send(db, draftId, { actor: admin });
+    const r = setStripeLink(db, draftId, 'https://buy.stripe.com/sent_xyz', { actor: admin });
+    expect(r.ok).toBe(true);
+    expect(r.invoice.status).toBe('sent');
+    expect(r.invoice.stripe_payment_link_url).toBe('https://buy.stripe.com/sent_xyz');
+  });
+
+  it('rejects on a paid invoice', () => {
+    send(db, draftId, { actor: admin });
+    db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ?").run(draftId);
+    const r = setStripeLink(db, draftId, 'https://buy.stripe.com/x', { actor: admin });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('wrong_status');
+  });
+
+  it('rejects on a void invoice', () => {
+    db.prepare("UPDATE invoices SET status = 'void' WHERE id = ?").run(draftId);
+    const r = setStripeLink(db, draftId, 'https://buy.stripe.com/x', { actor: admin });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('wrong_status');
+  });
+
+  it('rejects malformed URLs', () => {
+    expect(setStripeLink(db, draftId, 'not-a-url', { actor: admin }).reason).toBe('invalid_stripe_url');
+    expect(setStripeLink(db, draftId, 'ftp://x.example/y', { actor: admin }).reason).toBe('invalid_stripe_url');
+  });
+
+  it('clears the link when given null/empty', () => {
+    setStripeLink(db, draftId, 'https://buy.stripe.com/a', { actor: admin });
+    const r = setStripeLink(db, draftId, null, { actor: admin });
+    expect(r.invoice.stripe_payment_link_url).toBeNull();
+  });
+
+  it('writes audit_changes on the update', () => {
+    setStripeLink(db, draftId, 'https://buy.stripe.com/aud', { actor: admin });
+    const audit = db.prepare("SELECT * FROM admin_audit WHERE action = 'invoice.update_stripe_link'").get();
+    expect(audit).toBeTruthy();
+    const changes = db.prepare('SELECT field, old_value, new_value FROM audit_changes WHERE audit_id = ?').all(audit.id);
+    expect(changes).toEqual([
+      { field: 'stripe_payment_link_url', old_value: null, new_value: 'https://buy.stripe.com/aud' },
+    ]);
+  });
+
+  it('rejects sub actor', () => {
+    expect(setStripeLink(db, draftId, 'https://buy.stripe.com/x', { actor: sub }).reason).toBe('forbidden');
+  });
+
+  it('returns not_found for unknown id', () => {
+    expect(setStripeLink(db, 9999, 'https://buy.stripe.com/x', { actor: admin }).reason).toBe('not_found');
   });
 });

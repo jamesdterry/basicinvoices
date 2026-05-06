@@ -57,6 +57,18 @@ export async function patchJson(url, body) {
   }).then(handle);
 }
 
+export async function putJson(url, body) {
+  return fetch(url, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: {
+      'content-type': 'application/json',
+      'x-csrf-token': readCookie(CSRF_COOKIE),
+    },
+    body: JSON.stringify(body ?? {}),
+  }).then(handle);
+}
+
 export async function deleteJson(url) {
   return fetch(url, {
     method: 'DELETE',

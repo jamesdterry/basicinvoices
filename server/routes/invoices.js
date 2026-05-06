@@ -6,6 +6,7 @@ import { requireSuperAdmin } from '../middleware/requireSuperAdmin.js';
 import { clientIp } from '../middleware/rateLimit.js';
 import * as invoices from '../services/invoices.js';
 import * as invoiceMail from '../services/invoiceMail.js';
+import * as payments from '../services/payments.js';
 import { renderInvoiceHtml } from '../views/invoice.html.js';
 
 export const invoicesRouter = Router();
@@ -26,6 +27,7 @@ function statusFor(reason) {
     case 'wrong_status':
     case 'locked':
     case 'no_client_email':
+    case 'has_payments':
       return 409;
     default:
       return 400;
@@ -133,6 +135,33 @@ invoicesRouter.post('/:id/revoke-token', (req, res) => {
   const r = invoices.revokePublicLink(db, id, { actor: req.user, ip: clientIp(req) });
   if (!r.ok) return res.status(statusFor(r.reason)).json({ error: r.reason });
   res.json({ invoice: r.invoice });
+});
+
+invoicesRouter.put('/:id/stripe-link', (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const url = req.body?.url ?? req.body?.stripe_payment_link_url ?? null;
+  const r = invoices.setStripeLink(db, id, url, { actor: req.user, ip: clientIp(req) });
+  if (!r.ok) return res.status(statusFor(r.reason)).json({ error: r.reason });
+  res.json({ invoice: r.invoice });
+});
+
+invoicesRouter.get('/:id/payments', (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  // Confirm the invoice exists + viewer can see it before listing payments.
+  const inv = invoices.get(db, id, req.user);
+  if (!inv) return res.status(404).json({ error: 'not_found' });
+  res.json({ payments: payments.list(db, { invoiceId: id }, req.user) });
+});
+
+invoicesRouter.post('/:id/payments', (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const r = payments.create(
+    db,
+    { ...(req.body || {}), invoice_id: id },
+    { actor: req.user, ip: clientIp(req) }
+  );
+  if (!r.ok) return res.status(statusFor(r.reason)).json({ error: r.reason });
+  res.status(201).json({ payment: r.payment, invoice: r.invoice });
 });
 
 // Server-rendered HTML preview for the in-app right-pane iframe. Same

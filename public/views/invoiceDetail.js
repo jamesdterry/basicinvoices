@@ -1,6 +1,7 @@
 import { h, state } from '/lib/state.js';
-import { getJson, patchJson, postJson, deleteJson } from '/lib/api.js';
+import { getJson, patchJson, postJson, putJson, deleteJson } from '/lib/api.js';
 import { formatMoney } from '/lib/money.js';
+import { PaymentForm } from '/components/paymentForm.js';
 
 function publicLink(token) {
   return `${window.location.origin}/i/${token}`;
@@ -22,9 +23,10 @@ export async function invoiceDetail({ id }, mount) {
   mount.replaceChildren(h('main', { class: 'wide stack' }, h('p', { class: 'muted' }, 'Loading…')));
   const numId = Number(id);
 
-  let invoice, lines;
+  let invoice, lines, payments;
   try {
     ({ invoice, lines } = await getJson(`/api/invoices/${numId}`));
+    ({ payments } = await getJson(`/api/invoices/${numId}/payments`));
   } catch (err) {
     mount.replaceChildren(
       h('main', { class: 'wide stack' },
@@ -37,13 +39,18 @@ export async function invoiceDetail({ id }, mount) {
 
   let editing = false;
   let editLines = false;
+  let editStripeLink = false;
   // Per-line draft state — { [lineId]: { description, sort_order } }
   let lineDrafts = {};
+  // Payment form state. null = closed; 'new' = adding; number = editing that id.
+  let paymentFormState = null;
 
   async function refresh() {
     const r = await getJson(`/api/invoices/${numId}`);
     invoice = r.invoice;
     lines = r.lines;
+    const pr = await getJson(`/api/invoices/${numId}/payments`);
+    payments = pr.payments;
     lineDrafts = {};
   }
 
@@ -128,12 +135,170 @@ export async function invoiceDetail({ id }, mount) {
           h('span', {}, formatMoney(invoice.amount_paid_cents || 0)),
         ),
       ),
-      invoice.stripe_payment_link_url
-        ? h('p', { class: 'muted' }, 'Stripe link: ', h('span', {}, invoice.stripe_payment_link_url))
-        : null,
+      stripeLinkRow(),
       invoice.notes
         ? h('div', { class: 'stack' }, h('h3', {}, 'Notes'), h('p', {}, invoice.notes))
         : null,
+    );
+  }
+
+  function stripeLinkRow() {
+    const canEdit = invoice.status === 'draft' || invoice.status === 'sent';
+    if (editStripeLink && canEdit) {
+      const input = h('input', {
+        type: 'url', value: invoice.stripe_payment_link_url || '',
+        placeholder: 'https://buy.stripe.com/...', style: 'flex:1',
+      });
+      const error = h('div', { class: 'error', hidden: true });
+      const save = h('button', { class: 'btn', type: 'submit' }, 'Save');
+      return h('form', {
+        class: 'stack',
+        onsubmit: async (e) => {
+          e.preventDefault();
+          error.hidden = true;
+          save.disabled = true;
+          try {
+            await putJson(`/api/invoices/${numId}/stripe-link`, { url: input.value || null });
+            editStripeLink = false;
+            await refresh();
+            render();
+          } catch (err) {
+            error.textContent = err?.body?.error || err.message || 'Save failed';
+            error.hidden = false;
+          } finally {
+            save.disabled = false;
+          }
+        },
+      },
+        h('div', { class: 'row' },
+          h('label', {}, 'Stripe link'),
+          input,
+          save,
+          h('button', { class: 'btn secondary', type: 'button',
+            onclick: () => { editStripeLink = false; render(); } }, 'Cancel'),
+        ),
+        error,
+      );
+    }
+    if (!invoice.stripe_payment_link_url && !canEdit) return null;
+    return h('p', { class: 'muted' },
+      'Stripe link: ',
+      invoice.stripe_payment_link_url
+        ? h('span', {}, invoice.stripe_payment_link_url)
+        : h('em', {}, 'none set'),
+      canEdit && !editing
+        ? h('button', { class: 'btn secondary', style: 'margin-left:.5rem',
+            onclick: () => { editStripeLink = true; render(); } },
+            invoice.stripe_payment_link_url ? 'Edit Stripe link' : 'Add Stripe link')
+        : null,
+    );
+  }
+
+  function paymentsSection() {
+    const canAddPayment = invoice.status === 'sent' || invoice.status === 'paid';
+
+    const tbody = h('tbody');
+    if (!payments.length) {
+      tbody.appendChild(h('tr', {}, h('td', { colspan: 6, class: 'muted' }, 'No payments yet.')));
+    }
+    for (const pmt of payments) {
+      const isEditingThis = paymentFormState === pmt.id;
+      if (isEditingThis) {
+        tbody.appendChild(h('tr', {}, h('td', { colspan: 6 },
+          PaymentForm({
+            defaults: {
+              received_date: pmt.received_date,
+              amount_cents: pmt.amount_cents,
+              method: pmt.method,
+              reference: pmt.reference,
+              note: pmt.note,
+            },
+            submitLabel: 'Save changes',
+            onSave: async (payload) => {
+              await patchJson(`/api/payments/${pmt.id}`, payload);
+              paymentFormState = null;
+              await refresh();
+              render();
+            },
+            onCancel: () => { paymentFormState = null; render(); },
+          }),
+        )));
+        continue;
+      }
+      tbody.appendChild(h('tr', {},
+        h('td', {}, pmt.received_date),
+        h('td', {}, formatMoney(pmt.amount_cents)),
+        h('td', {}, pmt.method),
+        h('td', {}, pmt.reference || ''),
+        h('td', {}, pmt.note || ''),
+        h('td', {},
+          h('button', {
+            class: 'btn secondary',
+            onclick: () => { paymentFormState = pmt.id; render(); },
+          }, 'Edit'),
+          ' ',
+          h('button', {
+            class: 'btn danger',
+            onclick: async () => {
+              if (!window.confirm('Delete this payment? Status will not auto-revert from paid.')) return;
+              await deleteJson(`/api/payments/${pmt.id}`);
+              await refresh();
+              render();
+            },
+          }, 'Delete'),
+        ),
+      ));
+    }
+
+    const balance = (invoice.total_cents || 0) - (invoice.amount_paid_cents || 0);
+    const addForm = paymentFormState === 'new'
+      ? h('div', { class: 'stack' },
+          PaymentForm({
+            submitLabel: 'Record payment',
+            onSave: async (payload) => {
+              await postJson(`/api/invoices/${numId}/payments`, payload);
+              paymentFormState = null;
+              await refresh();
+              render();
+            },
+            onCancel: () => { paymentFormState = null; render(); },
+          }),
+        )
+      : null;
+
+    const addBtn = canAddPayment && paymentFormState !== 'new'
+      ? h('button', {
+          class: 'btn',
+          onclick: () => { paymentFormState = 'new'; render(); },
+        }, 'Add payment')
+      : !canAddPayment
+        ? h('span', { class: 'muted' },
+            invoice.status === 'draft'
+              ? 'Send the invoice before recording payments.'
+              : 'Cannot record payments on a voided invoice.')
+        : null;
+
+    return h('section', { class: 'stack' },
+      h('div', { class: 'row' },
+        h('h2', {}, 'Payments'),
+        h('span', { class: 'spacer' }),
+        addBtn,
+      ),
+      h('table', {},
+        h('thead', {}, h('tr', {},
+          h('th', {}, 'Date'),
+          h('th', {}, 'Amount'),
+          h('th', {}, 'Method'),
+          h('th', {}, 'Reference'),
+          h('th', {}, 'Note'),
+          h('th', {}, ''),
+        )),
+        tbody,
+      ),
+      h('p', { class: 'muted' },
+        `Total received: ${formatMoney(invoice.amount_paid_cents || 0)} • Balance due: ${formatMoney(balance)}`,
+      ),
+      addForm,
     );
   }
 
@@ -361,6 +526,7 @@ export async function invoiceDetail({ id }, mount) {
         h('p', {}, h('a', { href: '#/invoices' }, '← All invoices')),
         detailsCard(),
         actionsRow(),
+        paymentsSection(),
         linesSection(),
         previewPane(),
       ),
