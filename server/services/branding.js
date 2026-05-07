@@ -12,7 +12,10 @@
 import { logAction } from './audit.js';
 
 const HEX_RX = /^#[0-9A-Fa-f]{6}$/;
-const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']);
+// WebP was originally accepted but the PDF renderer (pdfkit) has no path to
+// embed it without a heavy native dep. New uploads must be PNG/JPEG/SVG; any
+// pre-existing WebP rows still serve from /branding/logo on the web view.
+const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/svg+xml']);
 const NAME_MAX = 120;
 const ADDRESS_MAX = 500;
 export const LOGO_MAX_BYTES = 256 * 1024;

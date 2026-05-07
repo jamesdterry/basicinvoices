@@ -6,6 +6,7 @@
 // Skipped under NODE_ENV=test unless BI_PDF_ENABLED=1 (the e2e suite sets
 // the override; vitest mocks this module).
 
+import SVGtoPDF from 'svg-to-pdfkit';
 import { logger } from '../logger.js';
 import { config } from '../config.js';
 import * as invoices from './invoices.js';
@@ -67,11 +68,33 @@ function groupLines(lines) {
   return sections;
 }
 
-// pdfkit can embed PNG and JPEG natively. WebP and SVG are unsupported here;
-// we skip the logo with a one-time warn. The HTML/web view still serves all
-// four formats via the /branding/logo route.
-function logoEmbeddable(mime) {
-  return mime === 'image/png' || mime === 'image/jpeg';
+// pdfkit can embed PNG and JPEG natively. SVG goes through svg-to-pdfkit,
+// which writes vector ops directly into the document — best fidelity for a
+// logo. Anything else (e.g. an existing WebP row from before WebP uploads
+// were dropped) is skipped with a warn; the /branding/logo HTML route still
+// serves all stored formats unchanged.
+const LOGO_BOX_W = 140;
+const LOGO_BOX_H = 56;
+const LOGO_ADVANCE = 64;
+
+function drawLogo(doc, x, y, logoBuffer, logoMime) {
+  if (!logoBuffer) return false;
+  if (logoMime === 'image/png' || logoMime === 'image/jpeg') {
+    doc.image(logoBuffer, x, y, { fit: [LOGO_BOX_W, LOGO_BOX_H] });
+    return true;
+  }
+  if (logoMime === 'image/svg+xml') {
+    const svg = Buffer.isBuffer(logoBuffer) ? logoBuffer.toString('utf8') : String(logoBuffer);
+    SVGtoPDF(doc, svg, x, y, {
+      width: LOGO_BOX_W,
+      height: LOGO_BOX_H,
+      preserveAspectRatio: 'xMinYMin meet',
+      assumePt: true,
+    });
+    return true;
+  }
+  logger.warn({ mime: logoMime }, 'pdf: logo mime not embeddable, skipping');
+  return false;
 }
 
 async function buildPdf(data, logoBuffer, logoMime) {
@@ -119,12 +142,13 @@ function drawInvoice(doc, data, logoBuffer, logoMime) {
 
   // Left: logo + company name + business address
   let leftY = headerTop;
-  if (logoBuffer && logoEmbeddable(logoMime)) {
+  if (logoBuffer) {
     try {
-      doc.image(logoBuffer, pageLeft, leftY, { fit: [140, 56] });
-      leftY += 64;
+      if (drawLogo(doc, pageLeft, leftY, logoBuffer, logoMime)) {
+        leftY += LOGO_ADVANCE;
+      }
     } catch (err) {
-      logger.warn({ err }, 'pdf: logo embed failed; skipping');
+      logger.warn({ err, mime: logoMime }, 'pdf: logo embed failed; skipping');
     }
   }
   if (brand?.companyName) {

@@ -36,7 +36,7 @@ const ERRORS = {
   address_too_long: 'Business address must be 500 characters or fewer.',
   name_too_long: 'Name must be 120 characters or fewer.',
   name_required: 'Name cannot be empty.',
-  invalid_mime: 'Logo must be PNG, JPEG, WebP, or SVG.',
+  invalid_mime: 'Logo must be PNG, JPEG, or SVG.',
   logo_too_large: 'Logo must be 256 KB or smaller.',
   logo_required: 'Pick a file before uploading.',
   forbidden: 'Branding is editable by super-admins only.',
@@ -210,7 +210,7 @@ export async function branding(_params, mount) {
     // Logo block
     const fileInput = h('input', {
       type: 'file',
-      accept: 'image/png,image/jpeg,image/webp,image/svg+xml',
+      accept: 'image/png,image/jpeg,image/svg+xml',
     });
     const uploadBtn = h('button', { type: 'submit', class: 'btn' }, 'Upload logo');
     const removeBtn = h('button', {
@@ -265,8 +265,13 @@ export async function branding(_params, mount) {
             alt: 'Current logo',
           })
         : h('p', { class: 'muted' }, 'No logo set.'),
+      b.hasLogo && b.logoMime === 'image/webp'
+        ? h('p', { class: 'error' },
+            'Your logo is WebP. It shows on the web invoice but not on the ' +
+            'PDF — re-upload as PNG, JPEG, or SVG to fix.')
+        : null,
       h('label', { class: 'field' },
-        h('span', {}, 'Image (PNG / JPEG / WebP / SVG, ≤ 256 KB)'),
+        h('span', {}, 'Image (PNG, JPEG, or SVG, ≤ 256 KB)'),
         fileInput,
       ),
       h('div', { class: 'row' }, uploadBtn, removeBtn, logoError),

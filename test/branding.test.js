@@ -201,6 +201,26 @@ describe('branding.setLogo', () => {
     expect(r.reason).toBe('invalid_mime');
   });
 
+  it('rejects WebP (no longer accepted on upload)', () => {
+    const r = branding.setLogo(
+      db,
+      { filename: 'x.webp', mime: 'image/webp', bytes: Buffer.from('x') },
+      { actor: admin }
+    );
+    expect(r.reason).toBe('invalid_mime');
+  });
+
+  it('accepts SVG', () => {
+    const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+    const r = branding.setLogo(
+      db,
+      { filename: 'logo.svg', mime: 'image/svg+xml', bytes },
+      { actor: admin }
+    );
+    expect(r.ok).toBe(true);
+    expect(r.branding.logoMime).toBe('image/svg+xml');
+  });
+
   it('logs an audit row with byte length in meta_json (no binary)', () => {
     const bytes = Buffer.from('PNGDATA');
     branding.setLogo(db, { filename: 'logo.png', mime: 'image/png', bytes }, { actor: admin });

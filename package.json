@@ -32,7 +32,8 @@
     "nodemailer": "^6.9.16",
     "pdfkit": "^0.15.1",
     "pino": "^9.5.0",
-    "stripe": "^17.0.0"
+    "stripe": "^17.0.0",
+    "svg-to-pdfkit": "^0.1.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
