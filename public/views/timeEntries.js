@@ -76,6 +76,7 @@ export async function timeEntries(params, mount) {
   }
 
   let entries = [];
+  let editingId = null;
   async function refresh() {
     const query = {
       from: filters.from || undefined,
@@ -173,6 +174,49 @@ export async function timeEntries(params, mount) {
     }
     for (const e of entries) {
       const projectLabel = e.client_name ? `${e.client_name} — ${e.project_name}` : e.project_name;
+
+      if (editingId === e.id) {
+        const hoursInput = h('input', {
+          type: 'number', step: '0.25', min: '0.25', value: String(e.hours),
+        });
+        const descInput = h('input', {
+          type: 'text', value: e.description || '',
+        });
+        const save = async () => {
+          const num = Number(hoursInput.value);
+          const desc = descInput.value.trim();
+          if (!Number.isFinite(num) || num <= 0) { window.alert('Hours must be > 0'); return; }
+          if (!desc) { window.alert('Description required'); return; }
+          try {
+            await patchJson(`/api/time-entries/${e.id}`, { hours: num, description: desc });
+            editingId = null;
+            await refresh();
+            render();
+          } catch (err) {
+            window.alert(err?.body?.error || err?.message || 'Edit failed');
+          }
+        };
+        descInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') save(); });
+        hoursInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') save(); });
+
+        const editCells = [h('td', {}, e.entry_date)];
+        if (isAdmin) editCells.push(h('td', {}, e.user_display_name || ''));
+        editCells.push(
+          h('td', {}, projectLabel),
+          h('td', {}, hoursInput),
+          h('td', {}, descInput),
+          h('td', {},
+            h('button', { class: 'btn', onclick: save }, 'Save'),
+            h('button', {
+              class: 'btn secondary',
+              onclick: () => { editingId = null; render(); },
+            }, 'Cancel'),
+          ),
+        );
+        tbody.appendChild(h('tr', {}, ...editCells));
+        continue;
+      }
+
       const cells = [h('td', {}, e.entry_date)];
       if (isAdmin) cells.push(h('td', {}, e.user_display_name || ''));
       cells.push(
@@ -186,22 +230,7 @@ export async function timeEntries(params, mount) {
       } else {
         actions.appendChild(h('button', {
           class: 'btn secondary',
-          onclick: async () => {
-            const newHours = window.prompt('New hours', String(e.hours));
-            if (newHours == null) return;
-            const num = Number(newHours);
-            if (!Number.isFinite(num) || num <= 0) {
-              window.alert('Hours must be > 0');
-              return;
-            }
-            try {
-              await patchJson(`/api/time-entries/${e.id}`, { hours: num });
-              await refresh();
-              render();
-            } catch (err) {
-              window.alert(err?.body?.error || err?.message || 'Edit failed');
-            }
-          },
+          onclick: () => { editingId = e.id; render(); },
         }, 'Edit'));
         actions.appendChild(h('button', {
           class: 'btn danger',

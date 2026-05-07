@@ -96,6 +96,33 @@ test.describe.serial('time entries', () => {
       expect(bodyText).not.toMatch(/\$\d+\.\d{2}\/hr/);
     });
 
+    test('edits hours + description on an unbilled row from the time-entries table', async ({ page, request }) => {
+      await page.goto('/#/time-entries');
+      await expect(page.locator('h1')).toHaveText('My hours');
+
+      // Only one row matches the "Standup" description in non-editing mode.
+      await page.locator('tbody tr', { hasText: 'Standup' }).getByRole('button', { name: 'Edit' }).click();
+
+      // Only one row is in edit mode at a time, so scope inputs to the tbody.
+      await page.locator('tbody input[type="number"]').fill('0.75');
+      await page.locator('tbody input[type="text"]').fill('Standup write-up');
+      await page.locator('tbody').getByRole('button', { name: 'Save' }).click();
+
+      const updated = page.locator('tbody tr', { hasText: 'Standup write-up' });
+      await expect(updated).toHaveCount(1);
+      await expect(updated).toContainText('0.75');
+
+      // API confirms the persisted state matches the UI.
+      const list = await (
+        await request.get(`/api/time-entries?project_id=${projectId}`)
+      ).json();
+      const persisted = list.entries.find((e) => e.description === 'Standup write-up');
+      expect(persisted).toBeTruthy();
+      expect(persisted.hours).toBe(0.75);
+      // The original "Standup" description is gone.
+      expect(list.entries.some((e) => e.description === 'Standup')).toBe(false);
+    });
+
     test('cannot post on a project they are not a member of', async ({ request }) => {
       const headers = await csrfHeaders(request);
       const res = await request.post('/api/time-entries', {
@@ -163,6 +190,31 @@ test.describe.serial('time entries', () => {
       expect(onBehalfRes.status()).toBe(201);
       const onBehalf = await onBehalfRes.json();
       expect(onBehalf.entry.user_id).toBe(subId);
+    });
+
+    test('super-admin edits hours + description on an unbilled row from the time-entries table', async ({ page, request }) => {
+      await page.goto('/#/time-entries');
+      await expect(page.locator('h1')).toHaveText('Time');
+
+      await page
+        .locator('tbody tr', { hasText: 'Architecture review' })
+        .getByRole('button', { name: 'Edit' })
+        .click();
+
+      await page.locator('tbody input[type="number"]').fill('2');
+      await page.locator('tbody input[type="text"]').fill('Architecture review (revised)');
+      await page.locator('tbody').getByRole('button', { name: 'Save' }).click();
+
+      const updated = page.locator('tbody tr', { hasText: 'Architecture review (revised)' });
+      await expect(updated).toHaveCount(1);
+      await expect(updated).toContainText('2');
+
+      const list = await (
+        await request.get(`/api/time-entries?project_id=${projectId}&user_id=${adminId}`)
+      ).json();
+      const persisted = list.entries.find((e) => e.description === 'Architecture review (revised)');
+      expect(persisted).toBeTruthy();
+      expect(persisted.hours).toBe(2);
     });
 
     // Lock-on-invoice (PATCH/DELETE → 409 once invoice_id is set) is fully
