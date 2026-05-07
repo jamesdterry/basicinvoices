@@ -37,7 +37,7 @@ COPY package.json ./
 COPY server ./server
 COPY public ./public
 COPY scripts ./scripts
-COPY litestream.yml ./litestream.yml
+COPY litestream.yml /etc/litestream.yml
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
