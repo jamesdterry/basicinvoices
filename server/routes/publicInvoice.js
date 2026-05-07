@@ -38,7 +38,7 @@ publicInvoiceRouter.get('/:token.pdf', async (req, res) => {
 
   let pdf;
   try {
-    pdf = await invoicePdf.renderInvoicePdfFromData(data);
+    pdf = await invoicePdf.renderInvoicePdfFromData(db, data);
   } catch (err) {
     logger.error({ err, invoiceId: data.invoice.id }, 'pdf render failed');
     return res.status(500).type('text').send('PDF unavailable');

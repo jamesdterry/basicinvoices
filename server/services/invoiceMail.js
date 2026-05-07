@@ -50,7 +50,7 @@ export async function sendInvoiceEmail(db, invoiceId) {
     publicLink: link,
   });
 
-  const pdfResult = await invoicePdf.renderInvoicePdfFromData(data);
+  const pdfResult = await invoicePdf.renderInvoicePdfFromData(db, data);
   const attachments = pdfResult?.buffer
     ? [
         {
