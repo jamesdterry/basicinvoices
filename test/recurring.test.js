@@ -99,7 +99,7 @@ beforeEach(() => {
 
   const c = createClient(
     db,
-    { name: 'Acme', payment_terms_days: 14, contact_email: 'billing@acme.example' },
+    { name: 'Acme', payment_terms_days: 14, contact_emails: ['billing@acme.example'] },
     { actorId: admin.id }
   );
   const p = createProject(db, { client_id: c.client.id, name: 'Website' }, { actorId: admin.id });
@@ -397,7 +397,7 @@ describe('runDue — filtering', () => {
 describe('runDue — resilience', () => {
   it('one schedule failing does not block siblings; failed schedule does not advance', async () => {
     // Two schedules. We'll break one by deleting its project AFTER setting up.
-    const c2 = createClient(db, { name: 'Globex', contact_email: 'x@globex.test' }, { actorId: admin.id });
+    const c2 = createClient(db, { name: 'Globex', contact_emails: ['x@globex.test'] }, { actorId: admin.id });
     const p2 = createProject(db, { client_id: c2.client.id, name: 'Intranet' }, { actorId: admin.id });
     addMember(db, p2.project.id, { user_id: sub.id, bill_rate_cents: 10000 }, { actorId: admin.id });
     createTimeEntry(
@@ -543,7 +543,7 @@ describe('runDue — auto_send', () => {
       .run('2026-05-06', project.id);
   }
 
-  it('with valid contact_email, invoice flips to sent + meta.send=success', async () => {
+  it('with at least one contact email, invoice flips to sent + meta.send=success', async () => {
     makeAutoSendSchedule();
     const results = await runDue(db, { now: new Date('2026-05-06T12:00:00Z') });
     expect(results[0].status).toBe('success');
@@ -567,9 +567,9 @@ describe('runDue — auto_send', () => {
     expect(audit.summary).toContain('sent invoice');
   });
 
-  it('with null contact_email, invoice stays draft + meta.send=no_client_email', async () => {
-    // Strip the client's contact_email
-    db.prepare('UPDATE clients SET contact_email = NULL WHERE id = ?').run(project.client_id);
+  it('with empty contact_emails, invoice stays draft + meta.send=no_client_email', async () => {
+    // Strip the client's contact_emails
+    db.prepare("UPDATE clients SET contact_emails = '[]' WHERE id = ?").run(project.client_id);
     makeAutoSendSchedule();
 
     const results = await runDue(db, { now: new Date('2026-05-06T12:00:00Z') });
@@ -701,7 +701,7 @@ describe('tryClaimTick + maybeRunDue (atomic claim)', () => {
     expect(r1[0].status).toBe('success');
 
     // Force a second schedule to be due AFTER the interval passes.
-    const c2 = createClient(db, { name: 'Globex', contact_email: 'x@globex.test' }, { actorId: admin.id });
+    const c2 = createClient(db, { name: 'Globex', contact_emails: ['x@globex.test'] }, { actorId: admin.id });
     const p2 = createProject(db, { client_id: c2.client.id, name: 'P2' }, { actorId: admin.id });
     addMember(db, p2.project.id, { user_id: sub.id, bill_rate_cents: 5000 }, { actorId: admin.id });
     createTimeEntry(

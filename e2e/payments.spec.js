@@ -41,7 +41,7 @@ test.describe.serial('payments', () => {
 
       const cRes = await request.post('/api/clients', {
         headers,
-        data: { name: CLIENT, payment_terms_days: 14, contact_email: 'billing@payments-e2e.test' },
+        data: { name: CLIENT, payment_terms_days: 14, contact_emails: ['billing@payments-e2e.test'] },
       });
       expect(cRes.status()).toBe(201);
       const { client } = await cRes.json();

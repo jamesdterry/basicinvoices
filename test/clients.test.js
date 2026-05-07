@@ -30,8 +30,47 @@ describe('clients.create', () => {
     expect(r).toEqual({ ok: false, reason: 'name_required' });
   });
 
-  it('rejects invalid email', () => {
-    const r = create(db, { name: 'Acme', contact_email: 'not-an-email' }, { actorId });
+  it('defaults to an empty contact_emails list', () => {
+    const r = create(db, { name: 'Acme' }, { actorId });
+    expect(r.client.contact_emails).toEqual([]);
+  });
+
+  it('accepts a single valid contact email', () => {
+    const r = create(db, { name: 'Acme', contact_emails: ['billing@acme.example'] }, { actorId });
+    expect(r.client.contact_emails).toEqual(['billing@acme.example']);
+  });
+
+  it('accepts multiple valid contact emails in insertion order', () => {
+    const r = create(
+      db,
+      { name: 'Acme', contact_emails: ['a@x.test', 'b@y.test', 'c@z.test'] },
+      { actorId }
+    );
+    expect(r.client.contact_emails).toEqual(['a@x.test', 'b@y.test', 'c@z.test']);
+  });
+
+  it('rejects invalid email in the list', () => {
+    const r = create(db, { name: 'Acme', contact_emails: ['not-an-email'] }, { actorId });
+    expect(r).toEqual({ ok: false, reason: 'invalid_email' });
+  });
+
+  it('dedupes case-insensitively, preserving first-occurrence casing', () => {
+    const r = create(
+      db,
+      { name: 'Acme', contact_emails: ['Foo@x.test', 'foo@x.test', 'Bar@y.test'] },
+      { actorId }
+    );
+    expect(r.client.contact_emails).toEqual(['Foo@x.test', 'Bar@y.test']);
+  });
+
+  it('rejects more than 10 emails as too_many_emails', () => {
+    const eleven = Array.from({ length: 11 }, (_, i) => `u${i}@x.test`);
+    const r = create(db, { name: 'Acme', contact_emails: eleven }, { actorId });
+    expect(r).toEqual({ ok: false, reason: 'too_many_emails' });
+  });
+
+  it('rejects a non-array contact_emails input', () => {
+    const r = create(db, { name: 'Acme', contact_emails: 'a@b.test' }, { actorId });
     expect(r).toEqual({ ok: false, reason: 'invalid_email' });
   });
 
@@ -81,6 +120,44 @@ describe('clients.update', () => {
         { field: 'payment_terms_days', old_value: '14', new_value: '30' },
       ])
     );
+  });
+
+  it('records contact_emails change as JSON-stringified old/new', () => {
+    const { client } = create(
+      db,
+      { name: 'Acme', contact_emails: ['a@x.test'] },
+      { actorId }
+    );
+    update(db, client.id, { contact_emails: ['a@x.test', 'b@y.test'] }, { actorId });
+    const audit = db
+      .prepare("SELECT * FROM admin_audit WHERE action = 'client.update' ORDER BY id DESC")
+      .get();
+    const changes = db
+      .prepare('SELECT field, old_value, new_value FROM audit_changes WHERE audit_id = ?')
+      .all(audit.id);
+    expect(changes).toEqual([
+      {
+        field: 'contact_emails',
+        old_value: '["a@x.test"]',
+        new_value: '["a@x.test","b@y.test"]',
+      },
+    ]);
+  });
+
+  it('treats contact_emails update as a no-op when the list is unchanged', () => {
+    const { client } = create(
+      db,
+      { name: 'Acme', contact_emails: ['a@x.test'] },
+      { actorId }
+    );
+    const before = db
+      .prepare("SELECT COUNT(*) AS n FROM admin_audit WHERE action = 'client.update'")
+      .get().n;
+    update(db, client.id, { contact_emails: ['a@x.test'] }, { actorId });
+    const after = db
+      .prepare("SELECT COUNT(*) AS n FROM admin_audit WHERE action = 'client.update'")
+      .get().n;
+    expect(after).toBe(before);
   });
 
   it('is a no-op when nothing changed', () => {

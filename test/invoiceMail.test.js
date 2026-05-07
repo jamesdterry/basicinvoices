@@ -63,7 +63,7 @@ beforeEach(() => {
 
   const c = createClient(
     db,
-    { name: 'Acme', payment_terms_days: 14, contact_email: 'billing@acme.example' },
+    { name: 'Acme', payment_terms_days: 14, contact_emails: ['billing@acme.example'] },
     { actorId: admin.id }
   );
   const p = createProject(db, { client_id: c.client.id, name: 'Website' }, { actorId: admin.id });
@@ -110,7 +110,7 @@ describe('sendInvoiceEmail', () => {
     expect(lines).toHaveLength(1);
     const payload = lines[0];
     expect(payload.event).toBe('dev-email');
-    expect(payload.to).toBe('billing@acme.example');
+    expect(payload.to).toEqual(['billing@acme.example']);
     expect(payload.subject).toContain(invoice.number);
     expect(payload.subject).toContain('Acme');
     expect(payload.link).toMatch(new RegExp(`/i/${invoice.public_token}$`));
@@ -122,11 +122,22 @@ describe('sendInvoiceEmail', () => {
     expect(payload.attachments[0].bytes).toBeGreaterThan(0);
   });
 
-  it('returns no_client_email when the client has no contact_email', async () => {
+  it('returns no_client_email when the client has an empty contact_emails list', async () => {
     const invoice = makeSentInvoice();
-    db.prepare('UPDATE clients SET contact_email = NULL').run();
+    db.prepare("UPDATE clients SET contact_emails = '[]'").run();
     const out = await sendInvoiceEmail(db, invoice.id);
     expect(out).toEqual({ ok: false, reason: 'no_client_email' });
+  });
+
+  it('addresses every entry in contact_emails on the dev-email payload', async () => {
+    db
+      .prepare("UPDATE clients SET contact_emails = ?")
+      .run(JSON.stringify(['billing@acme.example', 'cc@acme.example']));
+    const invoice = makeSentInvoice();
+    const out = await sendInvoiceEmail(db, invoice.id);
+    expect(out.ok).toBe(true);
+    const payload = readLog()[0];
+    expect(payload.to).toEqual(['billing@acme.example', 'cc@acme.example']);
   });
 
   it('returns not_found when the invoice id is unknown', async () => {

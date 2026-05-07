@@ -62,7 +62,7 @@ test.describe.serial('reports', () => {
           data: {
             name: clientName,
             payment_terms_days: 14,
-            contact_email: `billing+${projectName.replace(/\s+/g, '-').toLowerCase()}@reports-e2e.test`,
+            contact_emails: [`billing+${projectName.replace(/\s+/g, '-').toLowerCase()}@reports-e2e.test`],
           },
         });
         expect(cRes.status()).toBe(201);

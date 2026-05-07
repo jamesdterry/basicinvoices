@@ -69,8 +69,8 @@ function insertSession(userId) {
 function insertClient(name) {
   const at = nowIso();
   const info = db.prepare(
-    `INSERT INTO clients (name, payment_terms_days, contact_email, created_at, updated_at)
-     VALUES (?, 14, 'billing@example.test', ?, ?)`
+    `INSERT INTO clients (name, payment_terms_days, contact_emails, created_at, updated_at)
+     VALUES (?, 14, '["billing@example.test"]', ?, ?)`
   ).run(name, at, at);
   return Number(info.lastInsertRowid);
 }

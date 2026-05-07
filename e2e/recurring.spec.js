@@ -25,7 +25,7 @@ test.describe.serial('recurring billing', () => {
         data: {
           name: CLIENT,
           payment_terms_days: 14,
-          contact_email: 'billing@recurring-e2e.test',
+          contact_emails: ['billing@recurring-e2e.test'],
         },
       });
       expect(cRes.status()).toBe(201);
@@ -142,7 +142,7 @@ test.describe.serial('recurring billing', () => {
         data: {
           name: 'Auto-Send E2E Client',
           payment_terms_days: 14,
-          contact_email: 'billing@auto-send-e2e.test',
+          contact_emails: ['billing@auto-send-e2e.test'],
         },
       });
       expect(cRes.status()).toBe(201);

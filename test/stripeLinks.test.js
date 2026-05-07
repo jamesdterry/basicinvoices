@@ -75,7 +75,7 @@ beforeEach(() => {
 
   const c = createClient(
     db,
-    { name: 'Acme', payment_terms_days: 14, contact_email: 'billing@acme.example' },
+    { name: 'Acme', payment_terms_days: 14, contact_emails: ['billing@acme.example'] },
     { actorId: admin.id }
   );
   const p = createProject(db, { client_id: c.client.id, name: 'Website' }, { actorId: admin.id });

@@ -3,6 +3,13 @@ import { getJson, patchJson, postJson } from '/lib/api.js';
 import { ClientForm } from '/components/clientForm.js';
 import { ProjectForm } from '/components/projectForm.js';
 
+function renderEmails(emails) {
+  if (!Array.isArray(emails) || emails.length === 0) {
+    return h('span', { class: 'muted' }, '—');
+  }
+  return h('ul', { class: 'plain' }, ...emails.map((e) => h('li', {}, e)));
+}
+
 export async function clientDetail({ id }, mount) {
   mount.replaceChildren(h('main', { class: 'wide stack' }, h('p', { class: 'muted' }, 'Loading…')));
   const numId = Number(id);
@@ -36,9 +43,9 @@ export async function clientDetail({ id }, mount) {
           onCancel: () => { editing = false; render(); },
         })
       : h('section', { class: 'stack' },
-          h('p', {},
+          h('div', {},
             h('strong', {}, 'Contact: '),
-            client.contact_email || h('span', { class: 'muted' }, '—'),
+            renderEmails(client.contact_emails),
           ),
           h('p', {},
             h('strong', {}, 'Payment terms: '),

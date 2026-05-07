@@ -32,8 +32,8 @@ export async function sendInvoiceEmail(db, invoiceId) {
   const data = invoices.getByPublicToken(db, row.public_token);
   if (!data) return { ok: false, reason: 'not_found' };
 
-  const to = data.client?.contact_email;
-  if (!to) return { ok: false, reason: 'no_client_email' };
+  const to = Array.isArray(data.client?.contact_emails) ? data.client.contact_emails : [];
+  if (to.length === 0) return { ok: false, reason: 'no_client_email' };
 
   const link = publicLinkFor(data.invoice.public_token);
   const subject = `Invoice ${data.invoice.number} — ${data.client.name}`;

@@ -54,12 +54,12 @@ beforeEach(() => {
 
   const acme = createClient(
     db,
-    { name: 'Acme', payment_terms_days: 14, contact_email: 'billing@acme.example' },
+    { name: 'Acme', payment_terms_days: 14, contact_emails: ['billing@acme.example'] },
     { actorId: admin.id }
   ).client;
   const globex = createClient(
     db,
-    { name: 'globex', contact_email: 'billing@globex.example' },   // lowercase to test NOCASE sort
+    { name: 'globex', contact_emails: ['billing@globex.example'] },   // lowercase to test NOCASE sort
     { actorId: admin.id }
   ).client;
 

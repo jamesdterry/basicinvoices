@@ -47,7 +47,7 @@ beforeEach(() => {
 
   const c = createClient(
     db,
-    { name: 'Acme', payment_terms_days: 14, contact_email: 'billing@acme.example' },
+    { name: 'Acme', payment_terms_days: 14, contact_emails: ['billing@acme.example'] },
     { actorId: admin.id }
   );
   const p = createProject(db, { client_id: c.client.id, name: 'Website' }, { actorId: admin.id });
@@ -324,8 +324,8 @@ describe('send', () => {
     expect(audit.summary).toContain('2026-0001');
   });
 
-  it('rejects with no_client_email when client has no contact_email', () => {
-    db.prepare('UPDATE clients SET contact_email = NULL').run();
+  it('rejects with no_client_email when client has no contact_emails', () => {
+    db.prepare("UPDATE clients SET contact_emails = '[]'").run();
     createTimeEntry(
       db,
       { project_id: project.id, entry_date: '2026-05-04', hours: 1, description: 'Work' },
@@ -385,7 +385,7 @@ describe('resendEmail', () => {
 
   it('rejects when client has no email', () => {
     const id = setupSent();
-    db.prepare('UPDATE clients SET contact_email = NULL').run();
+    db.prepare("UPDATE clients SET contact_emails = '[]'").run();
     const out = resendEmail(db, id, { actor: admin });
     expect(out.ok).toBe(false);
     expect(out.reason).toBe('no_client_email');

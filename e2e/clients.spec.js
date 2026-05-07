@@ -23,14 +23,27 @@ test.describe('super-admin', () => {
     const sub = users.find((u) => u.email === 'sub@example.com');
     expect(sub).toBeTruthy();
 
-    // Create a client.
+    // Create a client with two contact emails.
     const cRes = await request.post('/api/clients', {
       headers,
-      data: { name: 'E2E Client', contact_email: 'billing@e2e.test' },
+      data: {
+        name: 'E2E Client',
+        contact_emails: ['billing@e2e.test', 'cc@e2e.test'],
+      },
     });
     expect(cRes.status()).toBe(201);
     const { client } = await cRes.json();
     expect(client.name).toBe('E2E Client');
+    expect(client.contact_emails).toEqual(['billing@e2e.test', 'cc@e2e.test']);
+
+    // Update to drop one of the emails.
+    const uRes = await request.patch(`/api/clients/${client.id}`, {
+      headers,
+      data: { contact_emails: ['billing@e2e.test'] },
+    });
+    expect(uRes.status()).toBe(200);
+    const updated = (await uRes.json()).client;
+    expect(updated.contact_emails).toEqual(['billing@e2e.test']);
 
     // Create a project.
     const pRes = await request.post('/api/projects', {

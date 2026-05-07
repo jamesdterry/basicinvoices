@@ -110,7 +110,7 @@ function rowToLine(row) {
 function getInvoiceRow(db, id) {
   return db
     .prepare(
-      `SELECT i.*, c.name AS client_name, c.contact_email AS client_contact_email,
+      `SELECT i.*, c.name AS client_name, c.contact_emails AS client_contact_emails,
               p.name AS project_name
          FROM invoices i
          JOIN clients c  ON c.id = i.client_id
@@ -118,6 +118,18 @@ function getInvoiceRow(db, id) {
         WHERE i.id = ?`
     )
     .get(id);
+}
+
+// Parse a clients.contact_emails JSON column to an array. Defensive against
+// malformed JSON (returns []) so a corrupted row never throws out of a join.
+function parseClientEmails(json) {
+  if (json == null) return [];
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
 }
 
 function getLines(db, invoiceId) {
@@ -496,7 +508,9 @@ export function send(db, id, { actor, ip } = {}) {
   const existing = getInvoiceRow(db, id);
   if (!existing) return { ok: false, reason: 'not_found' };
   if (existing.status !== 'draft') return { ok: false, reason: 'wrong_status' };
-  if (!existing.client_contact_email) return { ok: false, reason: 'no_client_email' };
+  if (parseClientEmails(existing.client_contact_emails).length === 0) {
+    return { ok: false, reason: 'no_client_email' };
+  }
 
   const at = nowIso();
   db.prepare(
@@ -524,7 +538,9 @@ export function resendEmail(db, id, { actor, ip } = {}) {
   if (existing.status !== 'sent' && existing.status !== 'paid') {
     return { ok: false, reason: 'wrong_status' };
   }
-  if (!existing.client_contact_email) return { ok: false, reason: 'no_client_email' };
+  if (parseClientEmails(existing.client_contact_emails).length === 0) {
+    return { ok: false, reason: 'no_client_email' };
+  }
 
   logAction(db, {
     actorId: actor.id,
@@ -786,7 +802,7 @@ export function getByPublicToken(db, token) {
   const row = db
     .prepare(
       `SELECT i.*, c.name AS client_name, c.billing_address AS client_billing_address,
-              c.contact_email AS client_contact_email, c.payment_terms_days,
+              c.contact_emails AS client_contact_emails, c.payment_terms_days,
               p.name AS project_name
          FROM invoices i
          JOIN clients c  ON c.id = i.client_id
@@ -802,7 +818,7 @@ export function getByPublicToken(db, token) {
       id: row.client_id,
       name: row.client_name,
       billing_address: row.client_billing_address,
-      contact_email: row.client_contact_email,
+      contact_emails: parseClientEmails(row.client_contact_emails),
       payment_terms_days: row.payment_terms_days,
     },
     project: {

@@ -39,7 +39,7 @@ beforeEach(() => {
 
   const c = createClient(
     db,
-    { name: 'Acme', payment_terms_days: 14, contact_email: 'billing@acme.example' },
+    { name: 'Acme', payment_terms_days: 14, contact_emails: ['billing@acme.example'] },
     { actorId: admin.id }
   );
   const p = createProject(db, { client_id: c.client.id, name: 'Website' }, { actorId: admin.id });
@@ -67,7 +67,7 @@ beforeEach(() => {
   sentInvoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(r1.invoice.id);
 
   // Draft invoice on a second project — for wrong-status checks.
-  const c2 = createClient(db, { name: 'Globex', contact_email: 'b@globex.example' }, { actorId: admin.id });
+  const c2 = createClient(db, { name: 'Globex', contact_emails: ['b@globex.example'] }, { actorId: admin.id });
   const p2 = createProject(db, { client_id: c2.client.id, name: 'Intranet' }, { actorId: admin.id });
   addMember(db, p2.project.id, { user_id: sub.id, bill_rate_cents: 10000 }, { actorId: admin.id });
   createTimeEntry(

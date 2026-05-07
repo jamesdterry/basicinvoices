@@ -55,7 +55,7 @@ test.describe.serial('stripe-links — disabled mode', () => {
 
       const cRes = await request.post('/api/clients', {
         headers,
-        data: { name: CLIENT, payment_terms_days: 14, contact_email: 'billing@stripe-disabled.test' },
+        data: { name: CLIENT, payment_terms_days: 14, contact_emails: ['billing@stripe-disabled.test'] },
       });
       expect(cRes.status()).toBe(201);
       const { client } = await cRes.json();

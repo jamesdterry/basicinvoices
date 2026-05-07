@@ -131,7 +131,11 @@ export function renderInvoiceHtml({ invoice, lines, client, project, branding })
         <h3>Bill to</h3>
         <p class="client-name">${esc(client.name)}</p>
         ${client.billing_address ? `<p class="address">${esc(client.billing_address).replace(/\n/g, '<br />')}</p>` : ''}
-        ${client.contact_email ? `<p class="email">${esc(client.contact_email)}</p>` : ''}
+        ${
+          Array.isArray(client.contact_emails) && client.contact_emails.length
+            ? `<p class="email">${esc(client.contact_emails.join(', '))}</p>`
+            : ''
+        }
       </div>
       <div class="project">
         <h3>Project</h3>

@@ -2,6 +2,12 @@ import { h } from '/lib/state.js';
 import { getJson, postJson } from '/lib/api.js';
 import { ClientForm } from '/components/clientForm.js';
 
+function formatEmails(emails) {
+  if (!Array.isArray(emails) || emails.length === 0) return '';
+  if (emails.length === 1) return emails[0];
+  return `${emails[0]} +${emails.length - 1}`;
+}
+
 export async function clients(_params, mount) {
   mount.replaceChildren(h('main', { class: 'wide stack' }, h('p', { class: 'muted' }, 'Loading…')));
 
@@ -17,7 +23,7 @@ export async function clients(_params, mount) {
             h('a', { href: `#/clients/${c.id}` }, c.name),
             c.archived_at ? h('span', { class: 'tag' }, 'archived') : null,
           ),
-          h('td', {}, c.contact_email || ''),
+          h('td', {}, formatEmails(c.contact_emails)),
           h('td', {}, String(c.payment_terms_days)),
         ),
       );

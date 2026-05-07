@@ -194,11 +194,13 @@ test.describe.serial('invoices', () => {
       expect(detail.invoice.status).toBe('draft');
     });
 
-    test('after adding contact_email, send transitions to sent and logs an email + PDF attachment', async ({ request }) => {
+    test('after adding contact emails, send transitions to sent and logs an email + PDF attachment to every recipient', async ({ request }) => {
       const headers = await csrfHeaders(request);
       const patchRes = await request.patch(`/api/clients/${clientId}`, {
         headers,
-        data: { contact_email: 'billing@invoice-e2e.example' },
+        data: {
+          contact_emails: ['billing@invoice-e2e.example', 'cc@invoice-e2e.example'],
+        },
       });
       expect(patchRes.status()).toBe(200);
 
@@ -222,7 +224,7 @@ test.describe.serial('invoices', () => {
 
       const log = readEmailLog();
       const entry = log.find((e) => e.event === 'dev-email' && e.subject?.includes(invoiceNumber));
-      expect(entry.to).toBe('billing@invoice-e2e.example');
+      expect(entry.to).toEqual(['billing@invoice-e2e.example', 'cc@invoice-e2e.example']);
       expect(entry.link).toContain(`/i/${publicToken}`);
       expect(entry.attachments).toHaveLength(1);
       expect(entry.attachments[0].filename).toBe(`Invoice-${invoiceNumber}.pdf`);

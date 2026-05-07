@@ -6,27 +6,58 @@ import { logAction } from './audit.js';
 const FIELDS = [
   'name',
   'billing_address',
-  'contact_email',
+  'contact_emails',
   'payment_terms_days',
   'notes',
 ];
+
+const MAX_EMAILS = 10;
 
 function nowIso() {
   return new Date().toISOString();
 }
 
 function isValidEmail(s) {
-  if (!s) return true;
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(s).trim());
+}
+
+// Accepts an array of strings (or null/undefined → []). Trims, drops empties,
+// validates each with the basic email regex, dedupes case-insensitively
+// (preserving the first occurrence's original casing + the user's order),
+// and caps at MAX_EMAILS.
+function parseEmails(input) {
+  if (input == null) return { ok: true, emails: [] };
+  if (!Array.isArray(input)) return { ok: false, reason: 'invalid_email' };
+  const out = [];
+  const seen = new Set();
+  for (const raw of input) {
+    if (raw == null) continue;
+    const v = String(raw).trim();
+    if (!v) continue;
+    if (!isValidEmail(v)) return { ok: false, reason: 'invalid_email' };
+    const key = v.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+  }
+  if (out.length > MAX_EMAILS) return { ok: false, reason: 'too_many_emails' };
+  return { ok: true, emails: out };
 }
 
 function rowToClient(row) {
   if (!row) return null;
+  let emails = [];
+  try {
+    const parsed = JSON.parse(row.contact_emails ?? '[]');
+    if (Array.isArray(parsed)) emails = parsed;
+  } catch {
+    emails = [];
+  }
   return {
     id: row.id,
     name: row.name,
     billing_address: row.billing_address,
-    contact_email: row.contact_email,
+    contact_emails: emails,
     payment_terms_days: row.payment_terms_days,
     notes: row.notes,
     archived_at: row.archived_at,
@@ -51,8 +82,9 @@ export function create(db, input, { actorId, ip } = {}) {
   const name = (input?.name || '').trim();
   if (!name) return { ok: false, reason: 'name_required' };
 
-  const contactEmail = (input?.contact_email || input?.contactEmail || '').trim() || null;
-  if (!isValidEmail(contactEmail)) return { ok: false, reason: 'invalid_email' };
+  const emailsResult = parseEmails(input?.contact_emails ?? input?.contactEmails);
+  if (!emailsResult.ok) return emailsResult;
+  const contactEmailsJson = JSON.stringify(emailsResult.emails);
 
   const billingAddress = (input?.billing_address || input?.billingAddress || '').trim() || null;
   const notes = (input?.notes || '').trim() || null;
@@ -67,10 +99,10 @@ export function create(db, input, { actorId, ip } = {}) {
   const info = db
     .prepare(
       `INSERT INTO clients
-       (name, billing_address, contact_email, payment_terms_days, notes, created_at, updated_at)
+       (name, billing_address, contact_emails, payment_terms_days, notes, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(name, billingAddress, contactEmail, paymentTermsDays, notes, at, at);
+    .run(name, billingAddress, contactEmailsJson, paymentTermsDays, notes, at, at);
 
   const client = get(db, info.lastInsertRowid);
   logAction(db, {
@@ -100,10 +132,10 @@ export function update(db, id, patch, { actorId, ip } = {}) {
     next.billing_address =
       ((patch.billing_address ?? patch.billingAddress) || '').trim() || null;
   }
-  if (patch?.contact_email !== undefined || patch?.contactEmail !== undefined) {
-    const v = ((patch.contact_email ?? patch.contactEmail) || '').trim() || null;
-    if (!isValidEmail(v)) return { ok: false, reason: 'invalid_email' };
-    next.contact_email = v;
+  if (patch?.contact_emails !== undefined || patch?.contactEmails !== undefined) {
+    const r = parseEmails(patch.contact_emails ?? patch.contactEmails);
+    if (!r.ok) return r;
+    next.contact_emails = r.emails;
   }
   if (patch?.payment_terms_days !== undefined || patch?.paymentTermsDays !== undefined) {
     const raw = patch.payment_terms_days ?? patch.paymentTermsDays;
@@ -118,12 +150,18 @@ export function update(db, id, patch, { actorId, ip } = {}) {
   }
 
   for (const f of FIELDS) {
-    if (existing[f] !== next[f]) {
-      changes.push({
-        field: f,
-        oldValue: existing[f],
-        newValue: next[f],
-      });
+    const before = existing[f];
+    const after = next[f];
+    if (f === 'contact_emails') {
+      const a = JSON.stringify(before ?? []);
+      const b = JSON.stringify(after ?? []);
+      if (a !== b) {
+        changes.push({ field: f, oldValue: a, newValue: b });
+      }
+      continue;
+    }
+    if (before !== after) {
+      changes.push({ field: f, oldValue: before, newValue: after });
     }
   }
   if (!changes.length) return { ok: true, client: existing };
@@ -131,13 +169,13 @@ export function update(db, id, patch, { actorId, ip } = {}) {
   const at = nowIso();
   db.prepare(
     `UPDATE clients
-       SET name = ?, billing_address = ?, contact_email = ?,
+       SET name = ?, billing_address = ?, contact_emails = ?,
            payment_terms_days = ?, notes = ?, updated_at = ?
      WHERE id = ?`
   ).run(
     next.name,
     next.billing_address,
-    next.contact_email,
+    JSON.stringify(next.contact_emails ?? []),
     next.payment_terms_days,
     next.notes,
     at,
