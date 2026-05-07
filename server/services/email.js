@@ -48,12 +48,36 @@ export async function sendEmail({ to, subject, text, html, link, attachments }) 
     appendE2eLog(payload);
     return { dev: true };
   }
-  return t.sendMail({
-    from: config.smtp.from || `Basic Invoices <noreply@${new URL(config.baseUrl).host}>`,
-    to,
-    subject,
-    text,
-    html,
-    attachments,
-  });
+  const from = config.smtp.from || `Basic Invoices <noreply@${new URL(config.baseUrl).host}>`;
+  try {
+    const info = await t.sendMail({ from, to, subject, text, html, attachments });
+    logger.info(
+      {
+        to,
+        subject,
+        messageId: info.messageId,
+        accepted: info.accepted,
+        rejected: info.rejected,
+        response: info.response,
+      },
+      'email sent'
+    );
+    return info;
+  } catch (err) {
+    logger.error(
+      {
+        to,
+        subject,
+        err: {
+          message: err?.message,
+          code: err?.code,
+          command: err?.command,
+          response: err?.response,
+          responseCode: err?.responseCode,
+        },
+      },
+      'email send failed'
+    );
+    throw err;
+  }
 }

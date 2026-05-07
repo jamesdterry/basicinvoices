@@ -11,6 +11,7 @@ import {
 import { makeRateLimiter, clientIp } from '../middleware/rateLimit.js';
 import { SESSION_COOKIE_NAME } from '../middleware/csrf.js';
 import { requireUser } from '../middleware/requireUser.js';
+import { logger } from '../logger.js';
 
 const SESSION_TTL_S = 30 * 24 * 60 * 60;
 
@@ -51,7 +52,7 @@ authRouter.post('/magic-link', async (req, res) => {
   try {
     await requestMagicLink(db, { email, ip });
   } catch (err) {
-    req.log?.error?.({ err }, 'magic-link request failed');
+    logger.error({ err: { message: err?.message, code: err?.code }, email }, 'magic-link request failed');
   }
   // Always 204 — never leak account existence.
   res.status(204).end();
