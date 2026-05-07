@@ -2,21 +2,36 @@ import { Router } from 'express';
 import { db } from '../db/connection.js';
 import { logger } from '../logger.js';
 import { requireUser } from '../middleware/requireUser.js';
+import { clientIp } from '../middleware/rateLimit.js';
 import { isEnabled as stripeEnabled } from '../services/stripeLinks.js';
 import * as recurring from '../services/recurring.js';
+import * as users from '../services/users.js';
 
 export const meRouter = Router();
 
-meRouter.get('/', requireUser, (req, res) => {
-  res.json({
-    id: req.user.id,
-    email: req.user.email,
-    display_name: req.user.display_name,
-    role: req.user.role,
-    // Stage 7A — flips on when STRIPE_SECRET_KEY is set; the SPA reads
-    // state.currentUser.stripe_enabled to show/hide the Generate button.
+function meShape(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    display_name: user.display_name,
+    role: user.role,
     stripe_enabled: stripeEnabled(),
-  });
+  };
+}
+
+function statusFor(reason) {
+  switch (reason) {
+    case 'forbidden':
+      return 403;
+    case 'not_found':
+      return 404;
+    default:
+      return 400;
+  }
+}
+
+meRouter.get('/', requireUser, (req, res) => {
+  res.json(meShape(req.user));
 
   // Stage 8.5 — wake-on-activity recurring tick. /api/me is hit on every
   // app-shell load and after auth state changes, so it's a natural choke
@@ -31,4 +46,13 @@ meRouter.get('/', requireUser, (req, res) => {
       logger.error({ err }, 'wake-on-activity tick failed');
     });
   });
+});
+
+meRouter.patch('/', requireUser, (req, res) => {
+  const r = users.updateProfile(db, req.user.id, req.body || {}, {
+    actor: req.user,
+    ip: clientIp(req),
+  });
+  if (!r.ok) return res.status(statusFor(r.reason)).json({ error: r.reason });
+  res.json(meShape({ ...req.user, display_name: r.user.display_name }));
 });

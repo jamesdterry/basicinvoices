@@ -1,4 +1,4 @@
-import { h, state } from '/lib/state.js';
+import { h, state, set } from '/lib/state.js';
 import { getJson, patchJson, deleteJson } from '/lib/api.js';
 
 const CSRF_COOKIE = 'bi_csrf';
@@ -34,7 +34,8 @@ async function uploadLogo(file) {
 const ERRORS = {
   invalid_color: 'Accent color must be in #RRGGBB hex format.',
   address_too_long: 'Business address must be 500 characters or fewer.',
-  name_too_long: 'Company name must be 120 characters or fewer.',
+  name_too_long: 'Name must be 120 characters or fewer.',
+  name_required: 'Name cannot be empty.',
   invalid_mime: 'Logo must be PNG, JPEG, WebP, or SVG.',
   logo_too_large: 'Logo must be 256 KB or smaller.',
   logo_required: 'Pick a file before uploading.',
@@ -91,6 +92,48 @@ export async function branding(_params, mount) {
   function render() {
     const formError = h('p', { class: 'error', hidden: true });
     const logoError = h('p', { class: 'error', hidden: true });
+    const profileError = h('p', { class: 'error', hidden: true });
+
+    // Profile / display_name. Snapshotted into invoice line descriptions
+    // (services/invoices.js) at draft time — old invoices keep their old text.
+    const displayNameInput = h('input', {
+      type: 'text',
+      class: 'input',
+      maxlength: '120',
+      value: state.currentUser?.display_name || '',
+      placeholder: 'Jane Smith',
+    });
+    const profileSaveBtn = h('button', { type: 'submit', class: 'btn' }, 'Save');
+    const profileForm = h('form', {
+      class: 'stack',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        profileError.hidden = true;
+        profileSaveBtn.disabled = true;
+        try {
+          const me = await patchJson('/api/me', {
+            display_name: displayNameInput.value,
+          });
+          set({ currentUser: me });
+          bumpPreview();
+          render();
+        } catch (err) {
+          profileError.textContent = errorText(err);
+          profileError.hidden = false;
+          profileSaveBtn.disabled = false;
+        }
+      },
+    },
+      h('h2', {}, 'Your name on invoices'),
+      h('label', { class: 'field' },
+        h('span', {}, 'Display name'),
+        displayNameInput,
+        h('small', { class: 'muted' },
+          'Shown next to each time entry on freshly drafted invoices. ' +
+          'Existing invoice lines are unchanged.'),
+      ),
+      h('div', { class: 'row' }, profileSaveBtn, profileError),
+    );
 
     const nameInput = h('input', {
       type: 'text',
@@ -245,6 +288,7 @@ export async function branding(_params, mount) {
           'Settings on this page appear on every invoice (HTML, PDF, and emailed copy).'),
         h('div', { class: 'branding-grid' },
           h('div', { class: 'stack' },
+            profileForm,
             settingsForm,
             logoForm,
           ),
