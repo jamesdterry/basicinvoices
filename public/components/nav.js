@@ -19,6 +19,7 @@ export function Nav(user) {
   if (user.role === 'super_admin') {
     links.push(navLink('#/invoices', 'Invoices', currentHash));
     links.push(navLink('#/recurring', 'Recurring', currentHash));
+    links.push(navLink('#/reports', 'Reports', currentHash));
   }
 
   return h('nav', { class: 'row' },

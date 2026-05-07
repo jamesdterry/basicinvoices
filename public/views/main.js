@@ -10,6 +10,7 @@ import { timeEntries } from '/views/timeEntries.js';
 import { invoices } from '/views/invoices.js';
 import { invoiceDetail } from '/views/invoiceDetail.js';
 import { recurring } from '/views/recurring.js';
+import { reports } from '/views/reports.js';
 
 const handlers = {
   home(_params, mount) {
@@ -38,6 +39,7 @@ const handlers = {
   invoices,
   invoiceDetail,
   recurring,
+  reports,
 };
 
 const navHost = document.getElementById('nav');

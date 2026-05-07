@@ -16,6 +16,7 @@ import { expensesRouter } from './routes/expenses.js';
 import { milestonesRouter } from './routes/milestones.js';
 import { invoicesRouter } from './routes/invoices.js';
 import { paymentsRouter } from './routes/payments.js';
+import { reportsRouter } from './routes/reports.js';
 import { publicInvoiceRouter } from './routes/publicInvoice.js';
 import { usersRouter } from './routes/users.js';
 import { adminRouter } from './routes/admin.js';
@@ -81,6 +82,7 @@ export function createApp() {
   app.use('/api/milestones', milestonesRouter);
   app.use('/api/invoices', invoicesRouter);
   app.use('/api/payments', paymentsRouter);
+  app.use('/api/reports', reportsRouter);
   app.use('/api/users', usersRouter);
   app.use('/api/admin', adminRouter);
 

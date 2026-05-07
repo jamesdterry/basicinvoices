@@ -325,9 +325,9 @@ E2E (`e2e/recurring.spec.js`): one new test that sets `auto_send: true` via PUT,
 
 **Verification.** Configure auto_send on a fixed-milestone schedule, set the client's `contact_email`, click Run now: confirm the invoice is in `sent` status and the dev-email log records the dispatch. Then unset the contact email and run again: confirm the next draft stays `draft` with audit `meta.send = 'no_client_email'` and an `error_log` row.
 
-### Stage 9 — Reports + CSV
-**Scope.** `services/reports.js` — `paymentsReport({ from, to, groupBy: 'client'|'project' })` returns `[{ key, label, totalCents, count }]` (USD only). Presets: this month, last month, this quarter, this year, last year, custom. Routes: `GET /api/reports/payments?...&format=json|csv` (CSV via small in-house writer). View: `reports.js` with preset chips, custom range picker, group-by toggle, table, "Export CSV".
-**Tests.** Aggregation correctness; date-range edge cases (use `issue_date` calendar day, be explicit about local vs UTC). E2E: generate sample data, run "this year by client" report, click CSV, verify download.
+### Stage 9 — DONE Reports + CSV
+**Scope.** `services/reports.js` — `paymentsReport({ from, to, groupBy: 'client'|'project' })` returns `[{ key, label, totalCents, count }]` (USD only). Date range is inclusive on both ends, filtered against `payments.received_date` (cash basis — chosen over `invoices.issue_date` so totals match the consultant's bank deposits and reconcile against invoices filtered to `paid`). Presets: this month, last month, this quarter, this year, last year, custom — non-custom presets recompute their range on every load so "this month" rolls forward across days. Routes: `GET /api/reports/payments?from&to&groupBy&format=json|csv` (super-admin only; CSV via `server/lib/csv.js`, RFC-4180 quoting, CRLF). CSV columns: `key, label, total_cents, total_dollars, payment_count`. View: `public/views/reports.js` with preset chips, custom range picker, group-by toggle, table, "Export CSV" anchor (`<a download>`; GET-only so no CSRF token needed).
+**Tests.** Aggregation correctness, range bounds (inclusive on both ends), `groupBy='project'` labels as `Client — Project`, NOCASE sort, role gating (sub→403), `invalid_range` when `to < from`. E2E (`e2e/reports.spec.js`): super-admin seeds two clients × two projects × two paid invoices, hits JSON + CSV endpoints, sub gets 403.
 **Verification.** Totals reconcile against invoice list filtered to `paid`.
 
 ## Critical files
