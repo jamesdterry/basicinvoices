@@ -330,7 +330,7 @@ E2E (`e2e/recurring.spec.js`): one new test that sets `auto_send: true` via PUT,
 **Tests.** Aggregation correctness, range bounds (inclusive on both ends), `groupBy='project'` labels as `Client — Project`, NOCASE sort, role gating (sub→403), `invalid_range` when `to < from`. E2E (`e2e/reports.spec.js`): super-admin seeds two clients × two projects × two paid invoices, hits JSON + CSV endpoints, sub gets 403.
 **Verification.** Totals reconcile against invoice list filtered to `paid`.
 
-### Stage 10 — Invoice branding (company name, logo, accent color)
+### Stage 10 — DONE Invoice branding (company name, address, logo, accent color)
 
 The rendered invoice (HTML + PDF) currently shows nothing about the consultant's business — no company name in the header, no business address (so the bill literally doesn't say where to mail a check), no logo, no color treatment. Stage 10 adds four pieces of light branding the super-admin can edit once and have flow through every invoice (manual + recurring), the public `/i/<token>` view, and the PDF.
 

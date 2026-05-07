@@ -23,6 +23,7 @@
 import crypto from 'node:crypto';
 import { logAction } from './audit.js';
 import { invoiceHasPayments } from './payments.js';
+import * as branding from './branding.js';
 import * as stripeLinks from './stripeLinks.js';
 
 const DATE_RX = /^\d{4}-\d{2}-\d{2}$/;
@@ -808,6 +809,7 @@ export function getByPublicToken(db, token) {
       id: row.project_id,
       name: row.project_name,
     },
+    branding: branding.get(db),
     revoked: row.public_token_revoked_at != null,
   };
 }

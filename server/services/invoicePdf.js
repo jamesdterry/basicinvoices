@@ -102,8 +102,9 @@ function inlineCss(html) {
   );
 }
 
-function cacheKey(invoice) {
-  return `${invoice.id}:${invoice.updated_at}`;
+function cacheKey(data) {
+  const brandStamp = data?.branding?.updatedAt || '';
+  return `${data.invoice.id}:${data.invoice.updated_at}:${brandStamp}`;
 }
 
 function cacheGet(key) {
@@ -148,7 +149,7 @@ async function renderBuffer(data) {
 export async function renderInvoicePdfFromData(data) {
   if (!data) return null;
   if (data.revoked) return { revoked: true };
-  const key = cacheKey(data.invoice);
+  const key = cacheKey(data);
   const cached = cacheGet(key);
   if (cached) return { buffer: cached };
   const result = await renderBuffer(data);

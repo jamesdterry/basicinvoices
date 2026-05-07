@@ -17,6 +17,8 @@ import { milestonesRouter } from './routes/milestones.js';
 import { invoicesRouter } from './routes/invoices.js';
 import { paymentsRouter } from './routes/payments.js';
 import { reportsRouter } from './routes/reports.js';
+import { brandingRouter } from './routes/branding.js';
+import { brandingPublicRouter } from './routes/brandingPublic.js';
 import { publicInvoiceRouter } from './routes/publicInvoice.js';
 import { usersRouter } from './routes/users.js';
 import { adminRouter } from './routes/admin.js';
@@ -69,6 +71,11 @@ export function createApp() {
   // cookie, and called by GitHub Actions / fly Scheduled Machines.
   app.use('/cron', cronRouter);
 
+  // Public branding assets (logo + accent stylesheet). Mounted BEFORE csrf
+  // + loadSessionFromCookie so the public invoice HTML/PDF can pull them
+  // without a session.
+  app.use('/branding', brandingPublicRouter);
+
   app.use(csrf);
   app.use(loadSessionFromCookie);
 
@@ -83,6 +90,7 @@ export function createApp() {
   app.use('/api/invoices', invoicesRouter);
   app.use('/api/payments', paymentsRouter);
   app.use('/api/reports', reportsRouter);
+  app.use('/api/branding', brandingRouter);
   app.use('/api/users', usersRouter);
   app.use('/api/admin', adminRouter);
 

@@ -11,6 +11,7 @@ import { invoices } from '/views/invoices.js';
 import { invoiceDetail } from '/views/invoiceDetail.js';
 import { recurring } from '/views/recurring.js';
 import { reports } from '/views/reports.js';
+import { branding } from '/views/branding.js';
 
 const handlers = {
   home(_params, mount) {
@@ -40,6 +41,7 @@ const handlers = {
   invoiceDetail,
   recurring,
   reports,
+  branding,
 };
 
 const navHost = document.getElementById('nav');

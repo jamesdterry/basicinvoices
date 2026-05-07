@@ -152,3 +152,39 @@ td a:hover { text-decoration: underline; }
 .tag.status-sent   { background: #e8f0ff; color: var(--accent); border-color: #c0d6ff; }
 .tag.status-paid   { background: #e8f6e8; color: #1f7a1f;     border-color: #b9dfb9; }
 .tag.status-void   { background: #fbe8e8; color: #9b1c1c;     border-color: #e7b6b6; }
+
+.branding-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 2rem;
+  align-items: start;
+}
+@media (max-width: 60rem) {
+  .branding-grid { grid-template-columns: 1fr; }
+}
+
+.branding-swatch {
+  display: inline-block;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.branding-thumb {
+  max-height: 96px;
+  max-width: 240px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem;
+  background: #fff;
+}
+
+.branding-preview {
+  width: 100%;
+  height: 800px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+}

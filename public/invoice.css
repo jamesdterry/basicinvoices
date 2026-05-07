@@ -39,8 +39,34 @@ html, body {
   margin-bottom: 1.5rem;
 }
 
-.invoice-header .brand h1 {
+.invoice-header .brand {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.invoice-header .brand .logo {
+  max-height: 64px;
+  max-width: 200px;
+  object-fit: contain;
+  margin-bottom: 0.25rem;
+}
+
+.invoice-header .brand .company-name {
   margin: 0;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.invoice-header .brand .company-address {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.invoice-header .brand h1 {
+  margin: 0.5rem 0 0;
   font-size: 1.75rem;
   letter-spacing: 0.02em;
 }

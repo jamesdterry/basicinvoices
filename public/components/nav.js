@@ -20,6 +20,7 @@ export function Nav(user) {
     links.push(navLink('#/invoices', 'Invoices', currentHash));
     links.push(navLink('#/recurring', 'Recurring', currentHash));
     links.push(navLink('#/reports', 'Reports', currentHash));
+    links.push(navLink('#/branding', 'Branding', currentHash));
   }
 
   return h('nav', { class: 'row' },

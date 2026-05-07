@@ -8,6 +8,7 @@ import * as invoices from '../services/invoices.js';
 import * as invoiceMail from '../services/invoiceMail.js';
 import * as payments from '../services/payments.js';
 import * as stripeLinks from '../services/stripeLinks.js';
+import * as branding from '../services/branding.js';
 import { renderInvoiceHtml } from '../views/invoice.html.js';
 
 export const invoicesRouter = Router();
@@ -194,6 +195,7 @@ invoicesRouter.get('/:id/preview', (req, res) => {
     lines: got.lines,
     client: { name: got.invoice.client_name },
     project: { name: got.invoice.project_name },
+    branding: branding.get(db),
   };
   res.set(
     'Content-Security-Policy',

@@ -55,9 +55,10 @@ function groupLines(lines) {
   return sections;
 }
 
-export function renderInvoiceHtml({ invoice, lines, client, project }) {
+export function renderInvoiceHtml({ invoice, lines, client, project, branding }) {
   const sections = groupLines(lines || []);
   const balance = (invoice.total_cents ?? 0) - (invoice.amount_paid_cents ?? 0);
+  const brand = branding || {};
 
   const sectionHtml = sections
     .map(
@@ -97,11 +98,19 @@ export function renderInvoiceHtml({ invoice, lines, client, project }) {
   <meta name="robots" content="noindex,nofollow" />
   <title>Invoice ${esc(invoice.number)}</title>
   <link rel="stylesheet" href="/invoice.css" />
+  <link rel="stylesheet" href="/branding/style.css?v=${esc(brand.updatedAt || '')}" />
 </head>
 <body class="invoice-page">
   <main class="invoice">
     <header class="invoice-header">
       <div class="brand">
+        ${brand.hasLogo ? `<img class="logo" src="/branding/logo" alt="" />` : ''}
+        ${brand.companyName ? `<p class="company-name">${esc(brand.companyName)}</p>` : ''}
+        ${
+          brand.businessAddress
+            ? `<p class="company-address">${esc(brand.businessAddress).replace(/\n/g, '<br />')}</p>`
+            : ''
+        }
         <h1>Invoice</h1>
         <p class="number">${esc(invoice.number)}</p>
         ${statusBadge(invoice.status)}
