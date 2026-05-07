@@ -40,11 +40,17 @@ Skip any block you don't need; the app degrades gracefully (no SMTP → emails g
 **SMTP (so invoices and magic-link emails actually deliver):**
 
 ```bash
+# Port 587 (STARTTLS) — leave SMTP_SECURE unset (or 'false').
 fly secrets set \
-  SMTP_HOST=... SMTP_PORT=587 SMTP_SECURE=true \
+  SMTP_HOST=... SMTP_PORT=587 \
   SMTP_USER=... SMTP_PASS=... \
   SMTP_FROM='Basic Invoices <invoices@example.com>'
+
+# Port 465 (implicit TLS) — set SMTP_SECURE=true.
+# fly secrets set SMTP_PORT=465 SMTP_SECURE=true ...
 ```
+
+`SMTP_SECURE` is passed straight through to nodemailer's `secure` flag: `true` means "TLS from the first byte" (port 465), `false`/unset means "STARTTLS upgrade" (port 587). Mismatching the two will hang the handshake.
 
 **Stripe Payment Links (Stage 7A):**
 
@@ -187,7 +193,7 @@ Restore from Litestream backup is **operator-armed** (fail-closed) per `WEBAPP_P
 
 1. SSH in: `fly ssh console`.
 2. Confirm the volume is wiped or the file is missing.
-3. Create the sentinel: `touch /data/RESTORE_FROM_REPLICA`.
+3. Create the sentinel: `touch /data/.allow-restore`.
 4. Restart: `fly machine restart <id>`.
 5. `docker-entrypoint.sh` runs `litestream restore` and removes the sentinel.
 
