@@ -50,21 +50,37 @@ if ! command -v fly >/dev/null 2>&1; then
   exit 1
 fi
 
+# Keys we deliberately do NOT push:
+#   - DB_PATH / NODE_ENV / LOG_LEVEL / PORT belong in fly.toml [env]. A
+#     `.env.production` derived from `.env.example` carries dev defaults
+#     (e.g. DB_PATH=./data/...) which, if pushed, OUTRANK fly.toml [env]
+#     and silently break production.
+#   - BUCKET_NAME / AWS_* are managed by `fly storage create`. Re-pushing
+#     stale local values from `.env.production` would clobber the Tigris
+#     credentials that the storage subcommand provisioned.
+SKIP_KEYS_REGEX='^(DB_PATH|NODE_ENV|LOG_LEVEL|PORT|BUCKET_NAME|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_ENDPOINT_URL_S3|AWS_REGION)$'
+
 # Build the filtered KEY=VALUE stream once so we can both preview keys and
 # pipe into fly. Strip CR (in case the file was edited on Windows), strip
-# `export `, skip comments / blank lines / empty-value lines.
+# `export `, skip comments / blank lines / empty-value lines, skip the
+# operational keys above (warning the user so the skip is visible).
 filtered="$(
   sed -e 's/\r$//' \
       -e 's/^[[:space:]]*export[[:space:]]\+//' \
       "$ENV_FILE" \
-    | awk '
+    | awk -v skip="$SKIP_KEYS_REGEX" '
         /^[[:space:]]*#/ { next }
         /^[[:space:]]*$/ { next }
         # require KEY=... ; require non-empty value after the =
         /^[A-Za-z_][A-Za-z0-9_]*=/ {
           eq = index($0, "=")
+          key = substr($0, 1, eq - 1)
           val = substr($0, eq + 1)
           if (val == "") next
+          if (key ~ skip) {
+            printf "  warn: skipping %s (managed by fly.toml [env] or fly storage create — see SKIP_KEYS_REGEX)\n", key > "/dev/stderr"
+            next
+          }
           print
         }
       '
