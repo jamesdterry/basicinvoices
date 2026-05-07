@@ -2,23 +2,27 @@
 
 Open-source invoicing for solo consultants. Track time (yours and your subcontractors'), expenses, and milestones; generate PDF invoices; collect payments; ship a monthly recurring schedule that drops drafts in your inbox for review.
 
-> **Status: pre-alpha.** The repo currently contains design docs only. Build is staged in [`DEVELOPMENT.md`](./DEVELOPMENT.md); each stage is independently shippable. The commands below describe the target shape — they will start working as Stage 0 lands.
-
 ## Why another invoicing app
 
 Most invoicing tools are SaaS subscriptions priced for agencies. Basic Invoices is a single-binary app you self-host on a [Fly.io](https://fly.io) machine for a few dollars a month, owns your data in a single SQLite file, and is small enough to read end to end.
 
 - **One super admin** (you, the consultant) plus optional **subcontractors** who log hours.
-- **Clients never log in.** They get a PDF + an obfuscated public link.
-- **USD only**, **no tax**, **no public API** in v1 — deliberate scope cuts.
-- **Stripe** support is one field: paste a Payment Link URL and it appears on the invoice.
+- **Clients never log in.** They get a PDF + an obfuscated public link at `/i/<token>`.
+- **USD only**, **no tax**, **no public API** — deliberate scope cuts.
+- **Stripe Payment Links** are optional. Set `STRIPE_SECRET_KEY` and one click on a draft generates a hosted Payment Link; without a key, paste a URL manually and it appears on the invoice.
+- **Recurring billing** drops monthly drafts (time-and-expenses or fixed-milestone). Optional `auto_send` mails the draft as soon as it's generated.
+- **Branding.** Set company name, multi-line address, accent color, and logo once; every invoice (HTML + PDF + email) picks them up.
+
+## What's shipped
+
+Stages 0–10 are complete: auth + magic links, clients/projects/members, time entries, expenses + milestones, invoices (draft → sent → paid → void) with public `/i/<token>` HTML + PDF, Stripe Payment Links, payments + auto-status, recurring schedules with TOTP-pinged cron, payments reports (JSON + CSV), and invoice branding.
 
 ## Stack
 
-- **Server:** Node 22 LTS, Express, [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3), bcrypt, nodemailer, helmet (strict CSP), pino.
+- **Server:** Node 22 LTS, Express, [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3), bcrypt, nodemailer, helmet (strict CSP), pino, [`stripe`](https://github.com/stripe/stripe-node) (optional), busboy.
 - **Client:** vanilla ESM modules, single `app.css`, **no build step**.
 - **PDF:** `puppeteer-core` + `@sparticuz/chromium`, sharing one HTML template with the public web view.
-- **Storage:** SQLite on a Fly volume, replicated continuously via [Litestream](https://litestream.io) to S3-compatible object storage.
+- **Storage:** SQLite on a Fly volume; back up by snapshotting the volume or replicating to S3-compatible object storage with [Litestream](https://litestream.io).
 - **Tests:** [vitest](https://vitest.dev) + supertest for unit/integration; [Playwright](https://playwright.dev) for end-to-end.
 
 ## Quickstart
@@ -45,7 +49,10 @@ Open <http://localhost:8080>, enter your super-admin email, and follow the magic
 
 ### Optional
 
-`SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` for outbound email (omit in dev — emails log to stdout). S3 credentials (`BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`) for Litestream replication.
+- `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` — outbound email. Omit in dev and emails log to stdout.
+- `STRIPE_SECRET_KEY` — enables the Generate-link button on draft and sent invoices. Without it, manual paste of a Payment Link URL is the fallback.
+- `RECURRING_TICK_SECRET` — TOTP shared secret for the GitHub Actions cron that wakes a stopped Fly machine to fire recurring schedules. Without it, recurring still runs on wake-on-activity (any super-admin app load triggers a tick). See [`DEPLOY.md`](./DEPLOY.md).
+- Litestream credentials (`BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`) for streaming SQLite to object storage.
 
 ## Tests
 
@@ -66,13 +73,14 @@ fly secrets set SUPER_ADMIN_EMAIL=you@example.com \
 fly deploy
 ```
 
-`min_machines_running = 1` is required so the in-process recurring-billing timer fires hourly. See [`WEBAPP_PLAYBOOK.md`](./WEBAPP_PLAYBOOK.md) §6–7 for the full deploy + Litestream restore-gate model.
+Recurring billing is driven by three convergent triggers (in-process timer, wake-on-activity from `/api/me`, and a daily TOTP-pinged GitHub Action against `/cron/recurring-tick`), so the app runs happily with `auto_stop_machines = "stop"` + `min_machines_running = 0`. The full production runbook — fly secrets, GitHub Actions setup, TOTP rotation, and recovery — lives in [`DEPLOY.md`](./DEPLOY.md).
 
 ## Documentation
 
+- [`DEPLOY.md`](./DEPLOY.md) — production deploy runbook (fly secrets, GitHub secrets, rotation, recovery).
 - [`DEVELOPMENT.md`](./DEVELOPMENT.md) — staged build plan, schema, design decisions.
-- [`WEBAPP_PLAYBOOK.md`](./WEBAPP_PLAYBOOK.md) — the portable Node + SQLite + Fly conventions this app inherits from (auth, CSRF, migrations, backup/restore).
 - [`AGENTS.md`](./AGENTS.md) — repo-specific notes for AI coding assistants.
+- [`WEBAPP_PLAYBOOK.md`](./WEBAPP_PLAYBOOK.md) — the portable Node + SQLite + Fly conventions this app inherits from (auth, CSRF, migrations, backup/restore).
 
 ## Contributing
 
