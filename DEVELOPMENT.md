@@ -330,6 +330,77 @@ E2E (`e2e/recurring.spec.js`): one new test that sets `auto_send: true` via PUT,
 **Tests.** Aggregation correctness, range bounds (inclusive on both ends), `groupBy='project'` labels as `Client — Project`, NOCASE sort, role gating (sub→403), `invalid_range` when `to < from`. E2E (`e2e/reports.spec.js`): super-admin seeds two clients × two projects × two paid invoices, hits JSON + CSV endpoints, sub gets 403.
 **Verification.** Totals reconcile against invoice list filtered to `paid`.
 
+### Stage 10 — Invoice branding (company name, logo, accent color)
+
+The rendered invoice (HTML + PDF) currently shows nothing about the consultant's business — no company name in the header, no business address (so the bill literally doesn't say where to mail a check), no logo, no color treatment. Stage 10 adds four pieces of light branding the super-admin can edit once and have flow through every invoice (manual + recurring), the public `/i/<token>` view, and the PDF.
+
+Why "light": one company name, one mailing address, one logo, one accent color. No multi-tenant theming, no per-client overrides, no font picker, no template variants. The design constraint is the existing CSP (`styleSrc: ["'self'"]`, `imgSrc: ["'self'", 'data:']`) — branding has to be reachable via same-origin URLs, not inline styles or external image hosts.
+
+**Schema.** Migration `0012_branding.sql` — singleton `branding` table:
+- `id INTEGER PRIMARY KEY CHECK (id = 1)` (matches the `_health` / `_recurring_meta` pattern).
+- `company_name TEXT NOT NULL DEFAULT ''` (empty until set; the template falls back to "" + a muted "Set your company name in Branding settings" hint when blank).
+- `business_address TEXT NOT NULL DEFAULT ''` — multi-line free-form (street, city/state/zip, country, etc.). Newlines are significant: stored as `\n`-separated text, rendered as `<br>` in the template (each line HTML-escaped). 500-char cap at the service layer so a runaway paste doesn't bloat every PDF.
+- `accent_color_hex TEXT NOT NULL DEFAULT '#1f6feb' CHECK (accent_color_hex GLOB '#[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]')` — the existing `app.css`'s `--accent` shade as the default so unconfigured installs still look reasonable.
+- `logo_filename TEXT` (NULL when no logo).
+- `logo_mime TEXT CHECK (logo_mime IN ('image/png','image/jpeg','image/webp','image/svg+xml'))`.
+- `logo_bytes BLOB` (NULL when no logo).
+- `updated_at TEXT NOT NULL`.
+- A migration-time seed `INSERT OR IGNORE INTO branding (id, accent_color_hex, updated_at) VALUES (1, '#1f6feb', '<at>')` so `services/branding.js#get` can always return a row.
+
+Logo bytes live in SQLite (Litestream covers it; ops parity with the rest of the schema). Hard cap: **256 KB** decoded; checked at upload before the INSERT. PDF bloat is the main concern.
+
+**Service.** `services/branding.js`:
+- `get(db)` → `{ companyName, businessAddress, accentColorHex, hasLogo, logoMime, updatedAt }` (never returns `logo_bytes` — callers that need bytes use `getLogo`). Read-only; no auth gate (the rendered invoice template needs to call this from inside the public `/i/<token>` route, which has no session).
+- `update(db, { companyName?, businessAddress?, accentColorHex? }, { actor, ip })` — super-admin only. Validates hex format (strict `#RRGGBB`, six digits, case-insensitive); trims/length-caps `companyName` at 120 chars; `businessAddress` is normalized to `\n` line endings (`\r\n` → `\n`), trimmed of leading/trailing blank lines, and length-capped at 500 chars (else `'address_too_long'`). Writes `audit_changes` for whichever fields changed; audit action `'branding.update'`. The address change row records old/new with newlines escaped to `\\n` so the audit log stays single-line scannable.
+- `setLogo(db, { filename, mime, bytes }, { actor, ip })` — super-admin only. Validates `mime` against the schema's CHECK, validates `bytes.length <= 256 * 1024` (else `'logo_too_large'`), stores name + mime + bytes. Audit action `'branding.set_logo'` with a `meta_json` carrying `{ filename, mime, bytes: <length> }` so the audit summary stays human-readable without dumping binary.
+- `clearLogo(db, { actor, ip })` — super-admin only; nulls all three logo columns. Audit `'branding.clear_logo'`.
+- `getLogo(db)` → `{ filename, mime, bytes } | null` — used by the logo route below.
+
+Reasons returned: `'forbidden'`, `'invalid_color'`, `'address_too_long'`, `'invalid_mime'`, `'logo_too_large'`, `'logo_required'` (clear when no logo set is a no-op success, not an error — `'logo_required'` is for a future "delete logo" guard if needed; reserve the name).
+
+**Routes.** `server/routes/branding.js`:
+- `GET /api/branding` — super-admin only; returns `services/branding.js#get` plus a derived `logo_url` (`'/branding/logo'` when `hasLogo`, else null) so the SPA can `<img src>` directly.
+- `PATCH /api/branding` — super-admin; calls `update`.
+- `POST /api/branding/logo` — super-admin; multipart via `busboy` (already in deps from Stage 6 / earlier; verify before Stage 10 implementation). Stream-cap at 256 KB + 1 byte and reject early on overflow. Single field name `logo`. Returns `200 { branding }` on success.
+- `DELETE /api/branding/logo` — super-admin; calls `clearLogo`.
+- `statusFor` mapping: `forbidden→403`, `logo_too_large→413`, others (`invalid_color`, `address_too_long`, `invalid_mime`)→400.
+
+`server/routes/brandingPublic.js` (mounted alongside `/i/`, before `csrf` + `loadSessionFromCookie`, so it works in browsers with no relationship to the app):
+- `GET /branding/logo` — serves `getLogo`'s bytes with `Content-Type: <mime>`, `Cache-Control: public, max-age=300, must-revalidate`, `ETag: "<sha256-of-bytes-prefix-16chars>"` (computed once and held in module-scope memo keyed on `branding.updated_at`). Returns 404 when no logo is set. Same rate-limit middleware as `/i/`.
+- `GET /branding/style.css` — serves a one-property stylesheet (`:root { --invoice-accent: #abcdef; }`) so the invoice template can pull the accent color through CSP without inline styles. Same caching strategy. The literal hex is re-validated against the same regex before being interpolated into the CSS, defense-in-depth against any future write that sneaks past the CHECK.
+
+**Template wiring.** `server/views/invoice.html.js` already includes `<link rel="stylesheet" href="/invoice.css" />`; add a second `<link rel="stylesheet" href="/branding/style.css?v=<updated_at>" />` so the cache-busts when the operator changes the color. Add `<img src="/branding/logo" />` to the invoice header (only when `hasLogo`). Add `<h1>` / header bar showing `companyName`, with the multi-line `businessAddress` rendered immediately below as a small block (each line HTML-escaped, joined by `<br>`; rely on the existing `escape()` helper in the template — never inject the raw address). Update `public/invoice.css` to pull the accent through `var(--invoice-accent, #1f6feb)` on whatever currently uses the brand-ish color (status badges, totals row underline, "Pay online" button border).
+
+**SPA view.** `public/views/branding.js` at hash `#/branding`, super-admin only. Form fields:
+- Company name — text input, 120-char `maxlength`.
+- Business address — `<textarea rows="4">`, 500-char `maxlength`, with helper text "One line per row — street, city/state/zip, country".
+- Accent color — `<input type="color">` plus a small swatch preview.
+- Logo — file input + thumbnail of the current logo + "Remove logo" button when set.
+- Save button calls `PATCH /api/branding`; logo upload is its own `<form>` submitted to `POST /api/branding/logo` via `fetch` with `FormData` (manual CSRF header — bypass `public/lib/api.js` since it's JSON-only).
+- Below the form, a small "Live preview" pane that fetches `/api/invoices` (most recent), grabs an id, and embeds `<iframe src="/i/<token>">` so the operator sees their changes immediately. (Cheaper alternative: render a static "sample invoice" iframe instead — TBD during implementation.)
+
+Add nav link in `public/components/nav.js` inside the existing `super_admin` block: `#/branding` → "Branding".
+
+**Recurring + auto-send.** No code changes — both already render through `services/invoiceMail.js#sendInvoiceEmail` → `renderInvoiceHtml` → branded template. Adding a test that recurring auto-send picks up a fresh logo is enough.
+
+**Migrations.** `0012_branding.sql`.
+
+**Tests.** Vitest:
+- `services/branding.js` happy-paths for `get` / `update` / `setLogo` / `clearLogo`; audit rows + `audit_changes` for color / name / address change; `logo_too_large` at exactly 256 KB + 1; `invalid_color` for short / non-hex / 8-digit input; `address_too_long` at 501 chars; address normalization (CRLF → LF, leading/trailing blank lines stripped, interior blank lines preserved); `forbidden` for sub actor on every mutation.
+- `routes/brandingPublic.js`: `/branding/logo` 404 when none, 200 with correct `Content-Type` + cache headers when set, `If-None-Match` with the served ETag returns 304. `/branding/style.css` includes the configured hex literal and a fallback for the `--invoice-accent` custom property.
+- `routes/branding.js`: PATCH validation surfaces `400 invalid_color`, multipart upload of an oversized payload returns `413 logo_too_large` and writes nothing.
+
+Playwright (`e2e/branding.spec.js`):
+- Super-admin: PATCH name + multi-line address + color, upload a tiny PNG, hit `/api/branding`, confirm `logo_url` is set and `business_address` round-trips with newlines preserved; fetch `/branding/style.css`, confirm it contains the configured hex; fetch a public `/i/<token>` page, confirm the company name, each address line (joined by `<br>`), and `<img src="/branding/logo">` appear in the HTML.
+- Sub: GET / PATCH / POST / DELETE on `/api/branding*` all 403; `/branding/logo` and `/branding/style.css` are public so they 200 even unauthenticated.
+
+**Verification.**
+1. `npm run dev`; log in as super-admin; navigate to `#/branding`; type a company name, paste a 3-line mailing address, pick an accent color, upload a small PNG.
+2. Open an existing invoice's public link in an incognito window; confirm the header shows the company name with the address stacked beneath it (one line per row), the logo renders, and accent-coloured elements use the picked hue.
+3. Fetch the `.pdf` URL on the same invoice; confirm the PDF has the same branding (Puppeteer renders the same template).
+4. Configure a recurring schedule with `auto_send=1` and a `contact_email`; "Run now"; confirm the dev-email log records the dispatch and the attached PDF is branded.
+5. Sub-account smoke: log in as sub, hit `#/branding` → "Reports are visible to super-admins only"-style gate; `/branding/logo` still serves (it's public).
+
 ## Critical files
 
 The five files most central to the build; everything else hangs off these:
