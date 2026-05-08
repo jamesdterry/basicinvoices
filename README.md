@@ -21,7 +21,7 @@ Stages 0–10 are complete: auth + magic links, clients/projects/members, time e
 
 - **Server:** Node 22 LTS, Express, [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3), bcrypt, nodemailer, helmet (strict CSP), pino, [`stripe`](https://github.com/stripe/stripe-node) (optional), busboy.
 - **Client:** vanilla ESM modules, single `app.css`, **no build step**.
-- **PDF:** `puppeteer-core` + `@sparticuz/chromium`, sharing one HTML template with the public web view.
+- **PDF:** [`pdfkit`](https://github.com/foliojs/pdfkit) + [`svg-to-pdfkit`](https://github.com/alafr/SVG-to-PDFKit), pure-JS so no headless browser or native binaries beyond what `better-sqlite3` already needs. The PDF and the public `/i/<token>` HTML view share the same data payload, so they always show identical numbers.
 - **Storage:** SQLite on a Fly volume; back up by snapshotting the volume or replicating to S3-compatible object storage with [Litestream](https://litestream.io).
 - **Tests:** [vitest](https://vitest.dev) + supertest for unit/integration; [Playwright](https://playwright.dev) for end-to-end.
 
