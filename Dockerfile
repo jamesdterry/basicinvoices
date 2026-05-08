@@ -24,7 +24,7 @@ RUN tar -xzf /tmp/litestream.tgz -C /usr/local/bin litestream \
 # X/font/sound stack that Stage 6 used is gone — only the basics remain.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl tini \
+      ca-certificates curl tini sqlite3 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /app/node_modules ./node_modules
