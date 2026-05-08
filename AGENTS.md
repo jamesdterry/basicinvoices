@@ -20,6 +20,7 @@ Open-source invoicing aimed at solo consultants. Vanilla JS/CSS/HTML on a Node +
 
 ## Working with this codebase
 
+- **Node 22 only.** `package.json` declares `"engines": { "node": ">=22" }` and the codebase uses Node-22-only idioms (e.g. `import pkg from '...' with { type: 'json' }` import attributes). If `node --version` reports anything other than 22.x, **stop and ask the maintainer** before running tests, scripts, or `node` commands — they almost certainly need to run `nvm use 22` (an `.nvmrc` may or may not be present). Do **not** work around a wrong-version environment by rewriting code to older syntax, downgrading dependencies, or rebuilding native modules; the symptoms (e.g. `better-sqlite3` ABI mismatches, "Unexpected token 'with'", `crypto.getRandomValues is not a function` from vite) all disappear once the shell is on Node 22.
 - **Only commit when explicitly told to.** `git add` and `git commit` are fine on a direct request from the maintainer for that single commit; do not generalize an approval to subsequent work. Read-only git commands (`status`, `diff`, `log`, `show`, `blame`) are always fine.
 - **Never push to a remote.** No `git push` (including `--force`), no `git push --tags`, and no tool action that triggers a push (e.g. `gh pr create` from a not-yet-pushed branch). The maintainer pushes manually.
 

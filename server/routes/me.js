@@ -6,6 +6,7 @@ import { clientIp } from '../middleware/rateLimit.js';
 import { isEnabled as stripeEnabled } from '../services/stripeLinks.js';
 import * as recurring from '../services/recurring.js';
 import * as users from '../services/users.js';
+import pkg from '../../package.json' with { type: 'json' };
 
 export const meRouter = Router();
 
@@ -16,6 +17,7 @@ function meShape(user) {
     display_name: user.display_name,
     role: user.role,
     stripe_enabled: stripeEnabled(),
+    version: pkg.version,
   };
 }
 

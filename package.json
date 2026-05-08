@@ -1,6 +1,6 @@
 {
   "name": "basicinvoices",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Open-source invoicing for solo consultants. Single-binary Node + SQLite app on Fly.io.",
   "type": "module",
   "private": true,

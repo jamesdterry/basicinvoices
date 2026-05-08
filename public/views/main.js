@@ -31,6 +31,9 @@ const handlers = {
             ? h('a', { href: '#/clients' }, 'Manage clients →')
             : h('a', { href: '#/projects' }, 'Your projects →'),
         ),
+        user?.version
+          ? h('p', { class: 'muted' }, `v${user.version}`)
+          : null,
       ),
     );
   },
