@@ -553,9 +553,19 @@ export async function invoiceDetail({ id }, mount) {
       h('h3', {}, 'Preview'),
       h('iframe', {
         src: `/api/invoices/${numId}/preview`,
-        style: 'width:100%; height:48rem; border:1px solid var(--border); border-radius: var(--radius);',
+        style: 'width:100%; height:90vh; border:1px solid var(--border); border-radius: var(--radius);',
         sandbox: 'allow-same-origin',
         title: `Invoice ${invoice.number} preview`,
+        onload: (e) => {
+          try {
+            const doc = e.target.contentDocument;
+            if (!doc) return;
+            const contentHeight = doc.documentElement.scrollHeight;
+            if (contentHeight > 0) e.target.style.height = `${contentHeight}px`;
+          } catch {
+            // leave the 90vh fallback in place
+          }
+        },
       }),
     );
   }
