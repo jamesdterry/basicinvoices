@@ -21,6 +21,7 @@ import { brandingRouter } from './routes/branding.js';
 import { brandingPublicRouter } from './routes/brandingPublic.js';
 import { publicInvoiceRouter } from './routes/publicInvoice.js';
 import { usersRouter } from './routes/users.js';
+import { subcontractorsRouter } from './routes/subcontractors.js';
 import { adminRouter } from './routes/admin.js';
 import { cronRouter } from './routes/cron.js';
 import { csrf } from './middleware/csrf.js';
@@ -92,6 +93,7 @@ export function createApp() {
   app.use('/api/reports', reportsRouter);
   app.use('/api/branding', brandingRouter);
   app.use('/api/users', usersRouter);
+  app.use('/api/subcontractors', subcontractorsRouter);
   app.use('/api/admin', adminRouter);
 
   // App-shell gating: only / and /index.html require a session. Everything

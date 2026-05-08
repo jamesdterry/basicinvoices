@@ -53,7 +53,7 @@ Super admin (env `SUPER_ADMIN_EMAIL`) → subcontractor.
 
 Subs only see projects where they are a member; super-admin sees all. Subs never see rates or invoices anywhere in the UI — the service layer strips `bill_rate_cents` from non-super-admin payloads. Project-membership enforcement lives in `middleware/requireProjectMember.js`.
 
-**User provisioning:** the magic-link flow auto-bootstraps the super-admin email on first login; there is no admin UI for creating subcontractors yet. To add a sub for local dev, insert directly: `sqlite3 data/basicinvoices.sqlite "INSERT INTO users (email, display_name, role, created_at, updated_at) VALUES ('sub@example.com', 'Sub', 'subcontractor', datetime('now'), datetime('now'));"`. The e2e suite's sub user is seeded by `scripts/seed-e2e.js`.
+**User provisioning:** the magic-link flow auto-bootstraps the super-admin email on first login. Subcontractors are managed from the super-admin-only Subs page (`#/subcontractors`) — `services/users.js` exposes `createSubcontractor` / `updateSubcontractor` / `setDisabled`, the `subcontractorsRouter` mounts at `/api/subcontractors`, and `POST /api/subcontractors` fires `requestMagicLink` fire-and-forget so the new sub gets an invite email (failures are logged + recoverable via `POST /:id/resend-invite`). Disable is soft (`users.disabled_at`) — hard delete is unsafe because `project_members`, `time_entries`, `expenses.created_by`, `milestones.created_by`, and `invoices.created_by` all `REFERENCES users` with `ON DELETE RESTRICT`. `setDisabled(true)` also drops live sessions for that user. The e2e suite's sub user is seeded by `scripts/seed-e2e.js`.
 
 ## Domain glossary
 
